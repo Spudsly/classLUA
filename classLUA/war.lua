@@ -71,15 +71,18 @@ local function doSelfBuffs()
 
     -- Deranged Goblin Familiar (always up, or out of combat without pet)
     if (mq.TLO.Me.Buff("Deranged Goblin Blessing").ID() or 0) == 0 or (not inCombat() and (mq.TLO.Pet.ID() or 0) == 0) then
-        mq.cmd('/itemnotify "Deranged Goblin Familiar" rightmouseup')
-        mq.delay(50)
+        local goblin = mq.TLO.FindItem("=Deranged Goblin Familiar")
+        if goblin() and goblin.TimerReady() == 0 then
+            mq.cmd('/useitem "Deranged Goblin Familiar"')
+            mq.delay(50)
+        end
     end
 
     -- Divine Intervention (Reward Item)
     if (mq.TLO.Me.Buff("Self Only Divine Intervention Clickie").ID() or 0) == 0 then
         local di = mq.TLO.FindItem("=Divine Intervention (Reward Item)")
         if di() and di.TimerReady() == 0 then
-            mq.cmd('/itemnotify "Divine Intervention (Reward Item)" rightmouseup')
+            mq.cmd('/useitem "Divine Intervention (Reward Item)"')
             mq.delay(50)
         end
     end
@@ -102,7 +105,7 @@ local function doAbilities()
     -- Bashful Crustaceans' Angerbomb
     local bomb = mq.TLO.FindItem("=Bashful Crustaceans' Angerbomb")
     if bomb() and bomb.TimerReady() == 0 then
-        mq.cmd('/itemnotify "Bashful Crustaceans\' Angerbomb" rightmouseup')
+        mq.cmd('/useitem "Bashful Crustaceans\' Angerbomb"')
         mq.delay(50)
     end
 
