@@ -166,7 +166,9 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
-        mq.cmd('/stick 15 uw behind loose hold')
+        if not mq.TLO.Me.Moving() then
+            mq.cmd('/stick 15 uw behind loose hold')
+        end
         doAbilities()
     end
 
