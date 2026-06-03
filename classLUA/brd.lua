@@ -95,11 +95,6 @@ local function doSelfBuffs()
     useCharmClicky()
 end
 
-local function doAbilities()
-    doSelfBuffs()
-    doCombat()
-end
-
 local function doCombat()
     -- Twist control: start in combat, stop out of combat
     if not mq.TLO.Twist.Twisting() and inCombat() then
@@ -151,6 +146,11 @@ local function doCombat()
             mq.delay(50)
         end
     end
+end
+
+local function doAbilities()
+    doSelfBuffs()
+    doCombat()
 end
 
 mq.bind('/engage', function(id)
