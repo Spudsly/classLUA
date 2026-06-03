@@ -4,6 +4,7 @@ local engaged = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 local epicTimer = 0
+local stickEngaged = false
 
 local function getGemByName(name)
     for i = 1, 12 do

@@ -3,6 +3,7 @@ local mq = require('mq')
 local engaged = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
+local stickEngaged = false
 
 local function checkZoneChange()
     local currentZone = mq.TLO.Zone.ID()
@@ -148,6 +149,7 @@ mq.bind('/engage', function(id)
 
     targetID = id
     engaged = true
+    stickEngaged = true
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -161,6 +163,7 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    stickEngaged = false
     print("Disengaged")
 end)
 
@@ -177,6 +180,13 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
+        if stickEngaged then
+            if mq.TLO.Me.Moving() then
+                stickEngaged = false
+            else
+                mq.cmd('/stick 15 uw behind loose hold')
+            end
+        end
         doAbilities()
     end
 
