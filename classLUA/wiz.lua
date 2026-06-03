@@ -7,6 +7,7 @@ local spells = {
 }
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 
@@ -51,6 +52,10 @@ local function useBackBuff()
     return false
 end
 
+local function inCombat()
+    return mq.TLO.Me.CombatState() == "COMBAT"
+end
+
 -- Check if target is valid and alive
 local function targetValid()
     if not targetID then return false end
@@ -72,58 +77,15 @@ local function trySpells()
     return false
 end
 
--- Bind the /engage command
-mq.bind('/engage', function(id)
-    id = tonumber(id)
-    if not id then
-        print("Usage: /engage ### (where ### is target ID)")
-        return
-    end
+local function doSelfBuffs()
+    useBackBuff()
+end
 
-    targetID = id
-    engaged = true
+local function doAbilities()
+    doSelfBuffs()
 
-    mq.cmdf('/tar id %d', targetID)
-    mq.delay(50)
-    mq.cmd('/stick 15 uw behind loose hold')
-    mq.delay(50)
-    mq.cmd('/attack on')
-
-    print(string.format("Engaging target ID %d", targetID))
-end)
-
--- Bind /disengage to stop
-mq.bind('/disengage', function()
-    engaged = false
-    targetID = nil
-    print("Disengaged")
-end)
-
-print("Wizard nuke script loaded. Use /engage ### to start, /disengage to stop")
-
-while true do
-    checkZoneChange()
-
-    -- Check if we should disengage target dead or gone
-    if engaged and not targetValid() then
-        print("Target dead or invalid, disengaging")
-        engaged = false
-        targetID = nil
-    end
-
-    -- Ensure autoattack stays on
-    if engaged and targetValid() then
-        mq.cmd('/attack on')
-    end
-
-    -- Back slot buff (Ancient Stonewall)
-    if engaged and targetValid() then
-        useBackBuff()
-    end
-
-    -- Only cast when engaged and valid target
-    if engaged and targetValid() and not mq.TLO.Me.Casting() then
-
+    -- Don't interrupt casting
+    if not mq.TLO.Me.Casting() then
         -- 1. Try equipped ranged item first (slot-based)
         local ranged = mq.TLO.InvSlot("ranged").Item
         local usedWand = false
@@ -141,8 +103,8 @@ while true do
         end
     end
 
-    -- Powersource slot click (Brain of Cazic Thule / The Necronomicon / any)
-    if engaged and targetValid() then
+    -- Powersource slot click (Brain of Cazic Thule / The Necronomicon / any, in-combat only)
+    if inCombat() then
         local ps = mq.TLO.Me.Inventory("Powersource")
         if ps() then
             local timer = ps.TimerReady()
@@ -151,6 +113,55 @@ while true do
                 mq.delay(50)
             end
         end
+    end
+end
+
+-- Bind the /engage command
+mq.bind('/engage', function(id)
+    id = tonumber(id)
+    if not id then
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
+        return
+    end
+
+    targetID = id
+    engaged = true
+    buffMode = false
+
+    mq.cmdf('/tar id %d', targetID)
+    mq.delay(50)
+    mq.cmd('/stick 15 uw behind loose hold')
+    mq.delay(50)
+    mq.cmd('/attack on')
+
+    print(string.format("Engaging target ID %d", targetID))
+end)
+
+-- Bind /disengage to stop
+mq.bind('/disengage', function()
+    engaged = false
+    targetID = nil
+    buffMode = false
+    print("Disengaged")
+end)
+
+print("Wizard nuke script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
+
+while true do
+    checkZoneChange()
+
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
+        print("Target dead or invalid, disengaging")
+        engaged = false
+        targetID = nil
+    elseif engaged and targetValid() then
+        mq.cmd('/attack on')
+        doAbilities()
     end
 
     mq.delay(100)

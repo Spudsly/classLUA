@@ -1,6 +1,7 @@
 local mq = require('mq')
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 local epicTimer = 0
@@ -70,7 +71,7 @@ local function useCharmClicky()
     return true
 end
 
-local function doAbilities()
+local function doSelfBuffs()
     -- Wings of the Angel (ammo slot)
     if (mq.TLO.Me.Buff("Timeless: Haste").ID() or 0) == 0 then
         local ammo = mq.TLO.Me.Inventory("Ammo")
@@ -92,6 +93,15 @@ local function doAbilities()
         mq.delay(50)
     end
 
+    useCharmClicky()
+end
+
+local function doAbilities()
+    doSelfBuffs()
+    doCombat()
+end
+
+local function doCombat()
     -- Twist control: start in combat, stop out of combat
     if not mq.TLO.Twist.Twisting() and inCombat() then
         mq.cmd('/twist 1 2 3 4')
@@ -142,19 +152,21 @@ local function doAbilities()
             mq.delay(50)
         end
     end
-
-    useCharmClicky()
 end
 
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
 
     targetID = id
     engaged = true
+    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -168,24 +180,28 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     if mq.TLO.Twist.Twisting() then
         mq.cmd('/twist stop')
     end
     print("Disengaged")
 end)
 
-print("Bard combat script loaded. Use /engage ### to start, /disengage to stop")
+print("Bard combat script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-        if mq.TLO.Twist.Twisting() then
-            mq.cmd('/twist stop')
-        end
+    elseif engaged and targetValid() then
+        mq.cmd('/attack on')
+        doAbilities()
+    end
     end
 
     if engaged and targetValid() then

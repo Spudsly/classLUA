@@ -1,0 +1,1670 @@
+-- modules/bindings.lua - SmartLoot Command Bindings Module
+local bindings = {}
+local mq = require("mq")
+local logging = require("modules.logging")
+local util = require("modules.util")
+local config = require("modules.config")
+local lootHistory = require("modules.loot_history")
+
+-- Module will be initialized with references to required components
+local SmartLootEngine = nil
+local lootUI = nil
+local modeHandler = nil
+local waterfallTracker = nil
+local uiLiveStats = nil
+local uiHelp = nil
+
+-- ============================================================================
+-- INITIALIZATION
+-- ============================================================================
+
+function bindings.initialize(engineRef, lootUIRef, modeHandlerRef, waterfallTrackerRef, uiLiveStatsRef, uiHelpRef)
+    SmartLootEngine = engineRef
+    lootUI = lootUIRef
+    modeHandler = modeHandlerRef
+    waterfallTracker = waterfallTrackerRef
+    uiLiveStats = uiLiveStatsRef
+    uiHelp = uiHelpRef
+
+    -- Register all command bindings
+    bindings.registerAllBindings()
+
+    logging.log("[Bindings] Command bindings module initialized")
+end
+
+-- ============================================================================
+-- COMMAND BINDING FUNCTIONS
+-- ============================================================================
+
+local function bindHotbarToggle()
+    mq.bind("/sl_toggle_hotbar", function()
+        if lootUI then
+            lootUI.showHotbar = not lootUI.showHotbar
+            config.uiVisibility.showHotbar = lootUI.showHotbar
+            config.setHotbarShow(lootUI.showHotbar)
+            util.printSmartLoot("Hotbar " .. (lootUI.showHotbar and "shown" or "hidden"), "info")
+        end
+    end)
+end
+
+local function bindPauseResume()
+    mq.bind("/sl_pause", function(action)
+        if not SmartLootEngine then return end
+
+        if action == "on" then
+            SmartLootEngine.setLootMode(SmartLootEngine.LootMode.Disabled, "Manual pause")
+            util.printSmartLoot("SmartLoot engine paused", "warning")
+        elseif action == "off" then
+            SmartLootEngine.setLootMode(SmartLootEngine.LootMode.Background, "Manual resume")
+            util.printSmartLoot("SmartLoot engine resumed", "success")
+        else
+            local currentMode = SmartLootEngine.getLootMode()
+            if currentMode == SmartLootEngine.LootMode.Disabled then
+                SmartLootEngine.setLootMode(SmartLootEngine.LootMode.Background, "Manual toggle")
+                util.printSmartLoot("SmartLoot engine resumed", "success")
+            else
+                SmartLootEngine.setLootMode(SmartLootEngine.LootMode.Disabled, "Manual toggle")
+                util.printSmartLoot("SmartLoot engine paused", "warning")
+            end
+        end
+    end)
+end
+
+local function bindUnknownReviewCommands()
+    mq.bind("/sl_reviewunknowns", function(action)
+        if not SmartLootEngine then
+            util.printSmartLoot("SmartLootEngine not available", "error")
+            return
+        end
+
+        local a = (action or ""):lower()
+        if a == "cancel" or a == "skip" then
+            SmartLootEngine.cancelUnknownReview()
+            util.printSmartLoot("Unknown item batch review cancelled", "warning")
+            return
+        end
+
+        if SmartLootEngine.hasQueuedUnknownReviewItems and SmartLootEngine.hasQueuedUnknownReviewItems() then
+            SmartLootEngine.beginUnknownReview()
+            util.printSmartLoot("Opening unknown item batch review", "info")
+        else
+            util.printSmartLoot("No queued unknown items to review", "info")
+        end
+    end)
+end
+
+-- Directed mode helpers
+local function bindDirectedMode()
+    mq.bind("/sl_directed", function(action)
+        local a = (action or ""):lower()
+        if a == "start" or a == "on" then
+            if SmartLootEngine and SmartLootEngine.setLootMode and SmartLootEngine.LootMode.Directed then
+                SmartLootEngine.setLootMode(SmartLootEngine.LootMode.Directed, "Directed mode start")
+                util.printSmartLoot("Directed mode enabled", "success")
+            end
+        elseif a == "stop" or a == "off" then
+            if SmartLootEngine and SmartLootEngine.setLootMode then
+                SmartLootEngine.setLootMode(SmartLootEngine.LootMode.Background, "Directed mode stop")
+                util.printSmartLoot("Directed mode disabled", "warning")
+            end
+        elseif a == "assign" then
+            if SmartLootEngine and SmartLootEngine.shouldShowDirectedAssignment then
+                SmartLootEngine.setDirectedAssignmentVisible(true)
+                util.printSmartLoot("Opening Directed Assignment UI", "info")
+            end
+        else
+            util.printSmartLoot("Usage: /sl_directed <start|stop|assign>", "info")
+        end
+    end)
+
+    -- Background peers receive directed tasks
+    mq.bind("/sl_directed_tasks", function(jsonTasks)
+        if not jsonTasks or jsonTasks == "" then
+            util.printSmartLoot("No directed tasks payload received", "error")
+            return
+        end
+        
+        local json = require("dkjson")
+        local ok, tasks = pcall(json.decode, jsonTasks)
+        if not ok then
+            util.printSmartLoot("Failed to decode directed tasks JSON: " .. tostring(tasks), "error")
+            return
+        end
+        
+        if type(tasks) ~= "table" then
+            util.printSmartLoot("Invalid directed tasks payload - not a table", "error")
+            return
+        end
+        
+        if SmartLootEngine and SmartLootEngine.enqueueDirectedTasks then
+            SmartLootEngine.enqueueDirectedTasks(tasks)
+            util.printSmartLoot(string.format("Enqueued %d directed tasks", #tasks), "success")
+        else
+            util.printSmartLoot("SmartLootEngine not available for directed tasks", "error")
+        end
+    end)
+
+    -- Simple test command for directed mode
+    mq.bind("/sl_directed_status", function()
+        if not SmartLootEngine or not SmartLootEngine.state then
+            util.printSmartLoot("SmartLootEngine or state not available", "error")
+            return
+        end
+        local q = SmartLootEngine.state.directedTasksQueue or {}
+        local dp = SmartLootEngine.state.directedProcessing or {}
+        util.printSmartLoot(string.format("Directed Status: active=%s, queue=%d, step=%s", tostring(dp.active), #q, tostring(dp.step)), "info")
+        if dp.currentTask then
+            util.printSmartLoot(string.format("Current Task: %s @ %d", tostring(dp.currentTask.itemName), tonumber(dp.currentTask.corpseSpawnID) or 0), "info")
+        end
+    end)
+
+    mq.bind("/sl_directed_resume", function()
+        local dp = SmartLootEngine.state.directedProcessing or {}
+        SmartLootEngine.state.directedProcessing.active = true
+        if dp.step == "navigating" then
+            util.printSmartLoot("Directed: forcing step to 'opening'", "warning")
+            SmartLootEngine.state.directedProcessing.step = "opening"
+        else
+            util.printSmartLoot("Directed: resuming current step", "info")
+        end
+    end)
+
+    mq.bind("/sl_directed_test", function()
+        if SmartLootEngine and SmartLootEngine.setDirectedAssignmentVisible then
+            -- Add a test candidate
+            SmartLootEngine._addDirectedCandidate({
+                corpseSpawnID = 12345,
+                corpseID = 12345,
+                corpseName = "test_corpse",
+                zone = "Test Zone",
+                itemName = "Test Item",
+                itemID = 1001,
+                iconID = 123,
+                quantity = 1,
+            })
+            SmartLootEngine.setDirectedAssignmentVisible(true)
+            util.printSmartLoot("Test directed assignment UI opened", "success")
+        end
+    end)
+
+    -- Debug peer discovery
+    mq.bind("/sl_debug_peers", function()
+        local config = require("modules.config")
+        util.printSmartLoot("=== Peer Discovery Debug ===", "system")
+        util.printSmartLoot("Loot Command Type: " .. tostring(config.lootCommandType), "info")
+        
+        local peers = util.getConnectedPeers()
+        util.printSmartLoot("Found " .. #peers .. " peers via util: " .. 
+            (#peers > 0 and table.concat(peers, ", ") or "none"), "info")
+            
+        -- Check group
+        local groupSize = mq.TLO.Group.Members() or 0
+        util.printSmartLoot("Group size: " .. groupSize, "info")
+        
+        -- Check raid
+        local raidSize = mq.TLO.Raid.Members() or 0
+        util.printSmartLoot("Raid size: " .. raidSize, "info")
+        
+        if util.debugPeerDiscovery then
+            util.debugPeerDiscovery()
+        end
+    end)
+end
+
+local function bindLiveStats()
+    mq.bind("/sl_stats", function(action)
+        if not uiLiveStats then
+            util.printSmartLoot("Live stats module not available", "warning")
+            return
+        end
+
+        if action == "show" then
+            uiLiveStats.setVisible(true)
+            local cfg = require("modules.config")
+            cfg.liveStats.show = true
+            pcall(cfg.save)
+            util.printSmartLoot("Live stats window shown", "success")
+        elseif action == "hide" then
+            uiLiveStats.setVisible(false)
+            local cfg = require("modules.config")
+            cfg.liveStats.show = false
+            pcall(cfg.save)
+            util.printSmartLoot("Live stats window hidden", "warning")
+        elseif action == "toggle" then
+            uiLiveStats.toggle()
+            local isVisible = uiLiveStats.isVisible()
+            local cfg = require("modules.config")
+            cfg.liveStats.show = isVisible
+            pcall(cfg.save)
+            util.printSmartLoot("Live stats window " .. (isVisible and "shown" or "hidden"),
+                isVisible and "success" or "warning")
+        elseif action == "reset" then
+            uiLiveStats.setPosition(200, 200)
+            util.printSmartLoot("Live stats position reset", "info")
+        elseif action == "compact" then
+            local config = uiLiveStats.getConfig()
+            uiLiveStats.setCompactMode(not config.compactMode)
+            util.printSmartLoot("Live stats compact mode " .. (not config.compactMode and "enabled" or "disabled"),
+                "info")
+        else
+            -- Default to toggle if no action specified
+            uiLiveStats.toggle()
+            local isVisible = uiLiveStats.isVisible()
+            local cfg = require("modules.config")
+            cfg.liveStats.show = isVisible
+            pcall(cfg.save)
+            util.printSmartLoot("Live stats window " .. (isVisible and "shown" or "hidden"),
+                isVisible and "success" or "warning")
+        end
+    end)
+end
+
+local function bindPeerCommands()
+    mq.bind("/sl_peer_commands", function(action)
+        if not lootUI then return end
+
+        local a = (action or ""):lower()
+        if a == "on" or a == "show" then
+            local wasVisible = lootUI.showPeerCommands or false
+            lootUI.showPeerCommands = true
+            lootUI.peerCommandsOpen = true
+            config.uiVisibility.showPeerCommands = true
+            if config.save then config.save() end
+            -- Ensure it uncollapses when (re)shown
+            if not wasVisible then lootUI.uncollapsePeerCommandsOnNextOpen = true end
+            util.printSmartLoot("Peer Commands window shown", "info")
+        elseif a == "off" or a == "hide" then
+            lootUI.showPeerCommands = false
+            lootUI.peerCommandsOpen = false
+            config.uiVisibility.showPeerCommands = false
+            if config.save then config.save() end
+            util.printSmartLoot("Peer Commands window hidden", "info")
+        elseif a == "reset" then
+            lootUI.showPeerCommands = true
+            lootUI.resetPeerCommandsWindow = true
+            lootUI.peerCommandsOpen = true
+            config.uiVisibility.showPeerCommands = true
+            if config.save then config.save() end
+            util.printSmartLoot("Peer Commands window reset", "success")
+        else
+            local wasVisible = lootUI.showPeerCommands or false
+            lootUI.showPeerCommands = not wasVisible
+            config.uiVisibility.showPeerCommands = lootUI.showPeerCommands
+            if config.save then config.save() end
+            if lootUI.showPeerCommands and not wasVisible then
+                lootUI.peerCommandsOpen = true
+                lootUI.uncollapsePeerCommandsOnNextOpen = true
+            elseif not lootUI.showPeerCommands then
+                lootUI.peerCommandsOpen = false
+            end
+            util.printSmartLoot("Peer Commands window " .. (lootUI.showPeerCommands and "shown" or "hidden"), "info")
+        end
+    end)
+
+    -- Open Directed Assignment UI
+    mq.bind("/sl_assign", function()
+        if SmartLootEngine and SmartLootEngine.setDirectedAssignmentVisible then
+            SmartLootEngine.setDirectedAssignmentVisible(true)
+            util.printSmartLoot("Opening Directed Assignment UI", "info")
+        end
+    end)
+
+    mq.bind("/sl_check_peers", function()
+        if modeHandler and modeHandler.debugPeerStatus then
+            modeHandler.debugPeerStatus()
+        else
+            util.printSmartLoot("Mode handler not available", "warning")
+        end
+    end)
+
+    mq.bind("/sl_refresh_mode", function()
+        if not modeHandler then
+            util.printSmartLoot("Mode handler not available", "warning")
+            return
+        end
+
+        local changed = modeHandler.refreshModeBasedOnPeers()
+        if changed then
+            util.printSmartLoot("Mode refreshed based on current peer status", "success")
+        else
+            util.printSmartLoot("Mode is already appropriate for current peer status", "info")
+        end
+    end)
+
+    mq.bind("/sl_mode", function(mode)
+        if not modeHandler then
+            util.printSmartLoot("Mode handler not available", "warning")
+            return
+        end
+
+        if not mode or mode == "" then
+            util.printSmartLoot("Usage: /sl_mode <mode>", "error")
+            util.printSmartLoot("Valid modes: main, background, rgmain, rgonce, once, directed, combatloot", "info")
+
+            -- Show current mode
+            local status = modeHandler.getPeerStatus()
+            util.printSmartLoot("Current mode: " .. (status.currentMode or "unknown"), "info")
+            return
+        end
+
+        mode = mode:lower()
+        local validModes = { main = true, background = true, rgmain = true, rgonce = true, once = true, directed = true, combatloot = true }
+
+        if not validModes[mode] then
+            util.printSmartLoot("Invalid mode: " .. mode, "error")
+            util.printSmartLoot("Valid modes: main, background, rgmain, rgonce, once, directed, combatloot", "info")
+            return
+        end
+
+        util.printSmartLoot("Setting mode to: " .. mode, "info")
+
+        -- Set the SmartLoot engine mode directly (this is what actually controls behavior)
+        if SmartLootEngine and SmartLootEngine.LootMode then
+            local engineMode
+            if mode == "main" and SmartLootEngine.LootMode.Main then
+                engineMode = SmartLootEngine.LootMode.Main
+            elseif mode == "background" and SmartLootEngine.LootMode.Background then
+                engineMode = SmartLootEngine.LootMode.Background
+            elseif mode == "rgmain" and SmartLootEngine.LootMode.RGMain then
+                engineMode = SmartLootEngine.LootMode.RGMain
+            elseif mode == "rgonce" and SmartLootEngine.LootMode.RGOnce then
+                engineMode = SmartLootEngine.LootMode.RGOnce
+            elseif mode == "once" and SmartLootEngine.LootMode.Once then
+                engineMode = SmartLootEngine.LootMode.Once
+            elseif mode == "directed" and SmartLootEngine.LootMode.Directed then
+                engineMode = SmartLootEngine.LootMode.Directed
+            elseif mode == "combatloot" and SmartLootEngine.LootMode.CombatLoot then
+                engineMode = SmartLootEngine.LootMode.CombatLoot
+            end
+
+            if engineMode and SmartLootEngine.setLootMode then
+                SmartLootEngine.setLootMode(engineMode, "Manual /sl_mode command")
+                util.printSmartLoot("SmartLoot engine mode set to: " .. mode, "success")
+            else
+                util.printSmartLoot("Failed to set engine mode", "error")
+            end
+        else
+            util.printSmartLoot("SmartLootEngine not available", "warning")
+        end
+
+        -- Also update mode handler for consistency
+        if modeHandler then
+            modeHandler.setMode(mode, "Manual /sl_mode command")
+        end
+
+        util.printSmartLoot("Mode set to: " .. mode, "success")
+    end)
+
+    mq.bind("/sl_combatloot", function()
+        if not SmartLootEngine then
+            util.printSmartLoot("SmartLoot engine not available", "warning")
+            return
+        end
+
+        logging.log("CombatLoot command received - activating combat loot mode")
+        
+        -- Set CombatLoot mode directly - this ignores combat checks and loots all nearby corpses
+        SmartLootEngine.setLootMode(SmartLootEngine.LootMode.CombatLoot, "Combat loot command")
+        util.printSmartLoot("CombatLoot mode activated - will loot all corpses ignoring combat, then revert", "success")
+    end)
+
+    mq.bind("/sl_peer_monitor", function(action)
+        if not modeHandler then
+            util.printSmartLoot("Mode handler not available", "warning")
+            return
+        end
+
+        if action == "on" or action == "start" then
+            if modeHandler.startPeerMonitoring() then
+                util.printSmartLoot("Peer monitoring started", "success")
+            else
+                util.printSmartLoot("Peer monitoring already active", "info")
+            end
+        elseif action == "off" or action == "stop" then
+            modeHandler.stopPeerMonitoring()
+            util.printSmartLoot("Peer monitoring stopped", "warning")
+        else
+            -- Toggle
+            if modeHandler.state.peerMonitoringActive then
+                modeHandler.stopPeerMonitoring()
+                util.printSmartLoot("Peer monitoring stopped", "warning")
+            else
+                modeHandler.startPeerMonitoring()
+                util.printSmartLoot("Peer monitoring started", "success")
+            end
+        end
+    end)
+end
+
+local function bindWhitelistOnly()
+    mq.bind("/sl_whitelistonly", function(arg)
+        local a = (arg or ""):lower()
+        if a == "on" or a == "1" or a == "true" then
+            local ok = config.setWhitelistOnly(mq.TLO.Me.Name(), true)
+            util.printSmartLoot("Whitelist-only loot: enabled", "success")
+        elseif a == "off" or a == "0" or a == "false" then
+            local ok = config.setWhitelistOnly(mq.TLO.Me.Name(), false)
+            util.printSmartLoot("Whitelist-only loot: disabled", "warning")
+        else
+            local state = false
+            if config.isWhitelistOnly then
+                state = config.isWhitelistOnly(mq.TLO.Me.Name())
+            end
+            util.printSmartLoot("Whitelist-only loot is " .. (state and "ENABLED" or "DISABLED") .. 
+                ". Usage: /sl_whitelistonly <on|off>", "info")
+        end
+    end)
+
+    -- Open Whitelist Manager popup
+    mq.bind("/sl_whitelist", function(action)
+        if not lootUI then return end
+        lootUI.whitelistManagerPopup = lootUI.whitelistManagerPopup or {}
+        local a = (action or ""):lower()
+        if a == "off" or a == "hide" or a == "close" then
+            lootUI.whitelistManagerPopup.isOpen = false
+            util.printSmartLoot("Whitelist Manager closed", "info")
+        else
+            lootUI.whitelistManagerPopup.isOpen = true
+            util.printSmartLoot("Whitelist Manager opened", "info")
+        end
+    end)
+end
+
+local function bindDefaultActionCommands()
+    -- Set default action for new items
+    mq.bind("/sl_defaultaction", function(action)
+        if not action or action == "" then
+            local toonName = mq.TLO.Me.Name() or "unknown"
+            local current = "Prompt"
+            if config.getDefaultNewItemAction then
+                current = config.getDefaultNewItemAction(toonName)
+            end
+            util.printSmartLoot("Default action for new items: " .. current, "info")
+            util.printSmartLoot("Usage: /sl_defaultaction <Prompt|PromptThenKeep|PromptThenIgnore|Keep|Ignore|Destroy>", "info")
+            return
+        end
+
+        local a = action:lower()
+        local validActions = {"prompt", "promptthenkeep", "promptthenignore", "keep", "ignore", "destroy"}
+        local normalized = nil
+
+        -- Normalize action (handle CamelCase for PromptThen* actions)
+        for _, valid in ipairs(validActions) do
+            if a == valid then
+                if valid == "promptthenkeep" then
+                    normalized = "PromptThenKeep"
+                elseif valid == "promptthenignore" then
+                    normalized = "PromptThenIgnore"
+                else
+                    -- Standard capitalization for simple actions
+                    normalized = valid:sub(1,1):upper() .. valid:sub(2)
+                end
+                break
+            end
+        end
+
+        if not normalized then
+            util.printSmartLoot("Invalid action. Valid options: Prompt, PromptThenKeep, PromptThenIgnore, Keep, Ignore, Destroy", "error")
+            return
+        end
+        
+        local toonName = mq.TLO.Me.Name() or "unknown"
+        if config.setDefaultNewItemAction then
+            local success, err = config.setDefaultNewItemAction(toonName, normalized)
+            if success then
+                util.printSmartLoot("Default action for new items set to: " .. normalized, "success")
+            else
+                util.printSmartLoot("Error: " .. tostring(err), "error")
+            end
+        else
+            util.printSmartLoot("Config functions not available", "error")
+        end
+    end)
+    
+    -- Set decision timeout for new items
+    mq.bind("/sl_decisiontimeout", function(seconds)
+        if not seconds or seconds == "" then
+            local toonName = mq.TLO.Me.Name() or "unknown"
+            local currentMs = 30000
+            if config.getDecisionTimeout then
+                currentMs = config.getDecisionTimeout(toonName)
+            end
+            util.printSmartLoot("Decision timeout: " .. math.floor(currentMs / 1000) .. " seconds", "info")
+            util.printSmartLoot("Usage: /sl_decisiontimeout <seconds> (5-300 seconds)", "info")
+            return
+        end
+        
+        local timeoutSec = tonumber(seconds)
+        if not timeoutSec then
+            util.printSmartLoot("Invalid timeout. Must be a number between 5 and 300 seconds", "error")
+            return
+        end
+        
+        -- Clamp to valid range
+        timeoutSec = math.max(5, math.min(300, timeoutSec))
+        local timeoutMs = timeoutSec * 1000
+        
+        local toonName = mq.TLO.Me.Name() or "unknown"
+        if config.setDecisionTimeout then
+            local actualMs = config.setDecisionTimeout(toonName, timeoutMs)
+            util.printSmartLoot("Decision timeout set to " .. math.floor(actualMs / 1000) .. " seconds", "success")
+        else
+            util.printSmartLoot("Config functions not available", "error")
+        end
+    end)
+
+    -- Set default prompt dropdown selection
+    mq.bind("/sl_promptdefault", function(selection)
+        if not selection or selection == "" then
+            local toonName = mq.TLO.Me.Name() or "unknown"
+            local current = "Keep"
+            if config.getDefaultPromptDropdown then
+                current = config.getDefaultPromptDropdown(toonName)
+            end
+            util.printSmartLoot("Default prompt dropdown: " .. current, "info")
+            util.printSmartLoot("Usage: /sl_promptdefault <Keep|Ignore|Destroy|KeepIfFewerThan|KeepThenIgnore>", "info")
+            return
+        end
+
+        -- Normalize selection (case-insensitive)
+        local validSelections = {
+            {input = "keep", output = "Keep"},
+            {input = "ignore", output = "Ignore"},
+            {input = "destroy", output = "Destroy"},
+            {input = "keepiffewerthan", output = "KeepIfFewerThan"},
+            {input = "keepthenignore", output = "KeepThenIgnore"}
+        }
+
+        local normalized = nil
+        local inputLower = selection:lower()
+        for _, valid in ipairs(validSelections) do
+            if inputLower == valid.input then
+                normalized = valid.output
+                break
+            end
+        end
+
+        if not normalized then
+            util.printSmartLoot("Invalid selection. Valid options: Keep, Ignore, Destroy, KeepIfFewerThan, KeepThenIgnore", "error")
+            return
+        end
+
+        local toonName = mq.TLO.Me.Name() or "unknown"
+        if config.setDefaultPromptDropdown then
+            local success, err = config.setDefaultPromptDropdown(toonName, normalized)
+            if success then
+                util.printSmartLoot("Default prompt dropdown set to: " .. normalized, "success")
+            else
+                util.printSmartLoot("Error: " .. tostring(err), "error")
+            end
+        else
+            util.printSmartLoot("Config functions not available", "error")
+        end
+    end)
+
+    -- Toggle button vs dropdown mode for pending decisions
+    mq.bind("/sl_pendingbuttons", function(arg)
+        local toonName = mq.TLO.Me.Name() or "unknown"
+
+        if not arg or arg == "" then
+            -- Show current setting
+            local current = false
+            if config.isUsePendingDecisionButtons then
+                current = config.isUsePendingDecisionButtons(toonName)
+            end
+            util.printSmartLoot("Pending decision buttons: " .. (current and "enabled" or "disabled"), "info")
+            util.printSmartLoot("Usage: /sl_pendingbuttons <on|off>", "info")
+            return
+        end
+
+        local enabled = arg:lower() == "on" or arg:lower() == "true" or arg == "1"
+        if config.setUsePendingDecisionButtons then
+            config.setUsePendingDecisionButtons(toonName, enabled)
+            util.printSmartLoot("Pending decision buttons " .. (enabled and "enabled" or "disabled"), "success")
+        else
+            util.printSmartLoot("Config functions not available", "error")
+        end
+    end)
+end
+
+local function bindStatusCommands()
+    mq.bind("/sl_mode_status", function()
+        if not modeHandler then
+            util.printSmartLoot("Mode handler not available", "warning")
+            return
+        end
+
+        local status = modeHandler.getPeerStatus()
+        util.printSmartLoot("=== SmartLoot Mode Status ===", "system")
+        util.printSmartLoot("Current Character: " .. (status.currentCharacter or "unknown"), "info")
+        util.printSmartLoot("Current Mode: " .. (status.currentMode or "unknown"), "info")
+        util.printSmartLoot("Should Be Main: " .. tostring(status.shouldBeMain), "info")
+        util.printSmartLoot("Recommended Mode: " .. (status.recommendedMode or "unknown"), "info")
+        util.printSmartLoot("Peer Monitoring: " .. (modeHandler.state.peerMonitoringActive and "Active" or "Inactive"),
+            "info")
+
+        if status.currentMode ~= status.recommendedMode then
+            util.printSmartLoot("WARNING: Current mode doesn't match peer order!", "warning")
+            util.printSmartLoot("Use /sl_refresh_mode to auto-correct", "warning")
+        end
+    end)
+
+    mq.bind("/sl_engine_status", function()
+        if not SmartLootEngine then
+            util.printSmartLoot("SmartLoot engine not available", "warning")
+            return
+        end
+
+        local state = SmartLootEngine.getState()
+        local perf = SmartLootEngine.getPerformanceMetrics()
+        util.printSmartLoot("=== SmartLoot Engine Status ===", "system")
+        util.printSmartLoot("Mode: " .. state.mode, "info")
+        util.printSmartLoot("State: " .. state.currentStateName, "info")
+        util.printSmartLoot(
+        "Current Corpse: " .. (state.currentCorpseID > 0 and tostring(state.currentCorpseID) or "None"), "info")
+        util.printSmartLoot("Current Item: " .. (state.currentItemName ~= "" and state.currentItemName or "None"), "info")
+        util.printSmartLoot("Pending Decision: " .. (state.needsPendingDecision and "YES" or "NO"), "info")
+        util.printSmartLoot("Session Stats:", "system")
+        util.printSmartLoot("  Corpses Processed: " .. state.stats.corpsesProcessed, "info")
+        util.printSmartLoot("  Items Looted: " .. state.stats.itemsLooted, "info")
+        util.printSmartLoot("  Items Ignored: " .. state.stats.itemsIgnored, "info")
+        util.printSmartLoot("  Items Destroyed: " .. state.stats.itemsDestroyed, "info")
+        util.printSmartLoot("Performance:", "system")
+        util.printSmartLoot("  Avg Tick Time: " .. string.format("%.2fms", perf.averageTickTime), "info")
+        util.printSmartLoot("  Corpses/Min: " .. string.format("%.1f", perf.corpsesPerMinute), "info")
+        util.printSmartLoot("  Items/Min: " .. string.format("%.1f", perf.itemsPerMinute), "info")
+    end)
+end
+
+local function bindEngineCommands()
+    mq.bind("/sl_rg_trigger", function()
+        if not SmartLootEngine then
+            util.printSmartLoot("SmartLoot engine not available", "warning")
+            return
+        end
+
+        logging.log("RGMercs trigger received - activating loot engine")
+
+        -- Determine appropriate mode based on current context
+        local currentMode = SmartLootEngine.getLootMode()
+
+        if currentMode == SmartLootEngine.LootMode.RGMain then
+            -- Trigger RGMain mode
+            if SmartLootEngine.triggerRGMain() then
+                util.printSmartLoot("RGMain triggered", "success")
+            end
+        else
+            --util.printSmartLoot("RG trigger ignored - not in RGMain mode", "warning")
+        end
+    end)
+
+    mq.bind("/sl_doloot", function()
+        if not SmartLootEngine then
+            util.printSmartLoot("SmartLoot engine not available", "warning")
+            return
+        end
+
+        logging.log("Manual loot command - setting once mode")
+        if config.useChaseCommands and config.chasePauseCommand then
+            mq.cmd(config.chasePauseCommand)
+        end
+        SmartLootEngine.setLootMode(SmartLootEngine.LootMode.Once, "Manual /sl_doloot command")
+        util.printSmartLoot("Loot once mode activated", "success")
+    end)
+
+    mq.bind("/sl_clearcache", function()
+        if not SmartLootEngine then
+            util.printSmartLoot("SmartLoot engine not available", "warning")
+            return
+        end
+
+        SmartLootEngine.resetProcessedCorpses()
+        util.printSmartLoot("SmartLoot cache cleared. All corpses will be treated as new.", "success")
+    end)
+
+    mq.bind("/sl_rulescache", function()
+        local database = require("modules.database")
+        if not database then
+            util.printSmartLoot("Database module not available", "warning")
+            return
+        end
+
+        util.printSmartLoot("Refreshing loot rules cache...", "info")
+
+        -- Refresh local character's rules cache
+        database.refreshLootRuleCache()
+
+        -- Clear all peer rule caches to force reload on next access
+        database.clearPeerRuleCache()
+
+        -- Also refresh our own entry in the peer cache for UI consistency
+        local currentToon = mq.TLO.Me.Name()
+        if currentToon then
+            database.refreshLootRuleCacheForPeer(currentToon)
+        end
+
+        util.printSmartLoot("Loot rules cache refreshed for local and all peers", "success")
+        util.printSmartLoot("Peer rules will reload fresh data on next access", "info")
+    end)
+
+    mq.bind("/sl_emergency_stop", function()
+        if not SmartLootEngine then
+            util.printSmartLoot("SmartLoot engine not available", "warning")
+            return
+        end
+
+        SmartLootEngine.emergencyStop("Manual command")
+        util.printSmartLoot("EMERGENCY STOP ACTIVATED", "error")
+    end)
+
+    mq.bind("/sl_resume", function()
+        if not SmartLootEngine then
+            util.printSmartLoot("SmartLoot engine not available", "warning")
+            return
+        end
+
+        SmartLootEngine.resume()
+        util.printSmartLoot("Emergency stop cleared - engine resumed", "success")
+    end)
+end
+
+local function bindWaterfallCommands()
+    mq.bind("/sl_waterfall_status", function()
+        if waterfallTracker and waterfallTracker.printStatus then
+            waterfallTracker.printStatus()
+        else
+            util.printSmartLoot("Waterfall tracker not available", "warning")
+        end
+    end)
+
+    mq.bind("/sl_waterfall_debug", function()
+        if not waterfallTracker then
+            util.printSmartLoot("Waterfall tracker not available", "warning")
+            return
+        end
+
+        local status = waterfallTracker.getStatus()
+        util.printSmartLoot("=== Waterfall Debug Info ===", "system")
+        util.printSmartLoot("Raw Status: " .. tostring(status), "info")
+
+        if SmartLootEngine then
+            local engineState = SmartLootEngine.getState()
+            util.printSmartLoot("Engine Waterfall Active: " .. tostring(engineState.waterfallActive), "info")
+            util.printSmartLoot("Engine Waiting for Waterfall: " .. tostring(engineState.waitingForWaterfall), "info")
+            util.printSmartLoot("Current State: " .. engineState.currentStateName, "info")
+        end
+    end)
+
+    mq.bind("/sl_waterfall_complete", function()
+        if not waterfallTracker then
+            util.printSmartLoot("Waterfall tracker not available", "warning")
+            return
+        end
+
+        util.printSmartLoot("Manually triggering waterfall completion check", "info")
+        local completed = waterfallTracker.checkWaterfallProgress()
+
+        if completed then
+            util.printSmartLoot("Waterfall marked as complete", "success")
+        else
+            util.printSmartLoot("Waterfall still active - peers pending completion", "warning")
+        end
+    end)
+
+    mq.bind("/sl_test_peer_complete", function(peerName)
+        if not waterfallTracker then
+            util.printSmartLoot("Waterfall tracker not available", "warning")
+            return
+        end
+
+        if not peerName or peerName == "" then
+            util.printSmartLoot("Usage: /sl_test_peer_complete <peerName>", "error")
+            return
+        end
+
+        -- Simulate a peer completion message
+        local testMessage = {
+            cmd = "waterfall_completion",
+            sessionId = "test_session_" .. peerName,
+            peerName = peerName,
+            sender = peerName,
+            completionData = {
+                status = "completed",
+                sessionDuration = 5000,
+                itemsProcessed = 3
+            }
+        }
+
+        util.printSmartLoot("Simulating completion from " .. peerName, "info")
+        waterfallTracker.handleMailboxMessage(testMessage)
+    end)
+end
+
+local function bindDebugCommands()
+    mq.bind("/sl_debug", function(action, level)
+        -- Handle original behavior (toggle debug window)
+        if not action or action == "" then
+            if not lootUI then
+                util.printSmartLoot("Loot UI not available", "warning")
+                return
+            end
+
+            lootUI.showDebugWindow = not lootUI.showDebugWindow
+            config.uiVisibility.showDebugWindow = lootUI.showDebugWindow
+            if config.save then config.save() end
+            if lootUI.showDebugWindow then
+                lootUI.forceDebugWindowVisible = true
+                util.printSmartLoot("Debug window opened", "info")
+            else
+                util.printSmartLoot("Debug window closed", "info")
+            end
+            return
+        end
+
+        -- Handle debug level commands
+        if action:lower() == "level" then
+            if not level then
+                -- Show current debug level
+                local status = logging.getDebugStatus()
+                util.printSmartLoot("Current debug level: " .. status.debugLevelName .. " (" .. status.debugLevel .. ")",
+                    "info")
+                util.printSmartLoot("Debug mode: " .. (status.debugMode and "ENABLED" or "DISABLED"), "info")
+                util.printSmartLoot("Usage: /sl_debug level <0-5 or NONE/ERROR/WARN/INFO/DEBUG/VERBOSE>", "info")
+                return
+            end
+
+            -- Convert level to number if it's a string number
+            local numLevel = tonumber(level)
+            if numLevel then
+                logging.setDebugLevel(numLevel)
+            else
+                -- Try as string level name
+                logging.setDebugLevel(level)
+            end
+            return
+        end
+
+        -- Unknown action
+        util.printSmartLoot("Usage: /sl_debug - Toggle debug window", "info")
+        util.printSmartLoot("Usage: /sl_debug level [0-5 or level name] - Set/show debug level", "info")
+    end)
+end
+
+local function bindChatCommands()
+    mq.bind("/sl_chat", function(mode)
+        if not mode or mode == "" then
+            util.printSmartLoot("Usage: /sl_chat <mode>", "error")
+            util.printSmartLoot("Valid modes: raid, group, guild, custom, silent", "info")
+
+            -- Show current mode
+            local config = require("modules.config")
+            local currentMode = config.chatOutputMode or "group"
+            local modeMapping = {
+                ["rsay"] = "raid",
+                ["group"] = "group",
+                ["guild"] = "guild",
+                ["custom"] = "custom",
+                ["silent"] = "silent"
+            }
+            local displayMode = modeMapping[currentMode] or currentMode
+            util.printSmartLoot("Current chat mode: " .. displayMode, "info")
+            return
+        end
+
+        -- Normalize the input
+        mode = mode:lower()
+
+        -- Map user-friendly names to internal config values
+        local modeMapping = {
+            ["raid"] = "rsay",
+            ["group"] = "group",
+            ["guild"] = "guild",
+            ["custom"] = "custom",
+            ["silent"] = "silent"
+        }
+
+        local configMode = modeMapping[mode]
+        if not configMode then
+            util.printSmartLoot("Invalid chat mode: " .. mode, "error")
+            util.printSmartLoot("Valid modes: raid, group, guild, custom, silent", "info")
+            return
+        end
+
+        -- Get config module
+        local config = require("modules.config")
+
+        -- Update the chat mode
+        config.chatOutputMode = configMode
+
+        -- Update the config directly first
+        config.chatOutputMode = configMode
+
+        -- Save the configuration
+        if config.save then
+            config.save()
+        end
+
+        util.printSmartLoot("Chat output mode changed to: " .. mode, "success")
+        logging.log("[Bindings] Chat mode changed to " .. configMode .. " via command")
+
+        -- Show the actual chat command that will be used
+        local chatCommand = ""
+        if config.getChatCommand then
+            chatCommand = config.getChatCommand() or ""
+        else
+            -- Fallback display
+            if configMode == "rsay" then
+                chatCommand = "/rsay"
+            elseif configMode == "group" then
+                chatCommand = "/g"
+            elseif configMode == "guild" then
+                chatCommand = "/gu"
+            elseif configMode == "custom" then
+                chatCommand = config.customChatCommand or "/say"
+            elseif configMode == "silent" then
+                chatCommand = "No Output"
+            end
+        end
+
+        if chatCommand and chatCommand ~= "" then
+            util.printSmartLoot("Chat command: " .. chatCommand, "info")
+        end
+    end)
+end
+
+local function bindChaseCommands()
+    -- Single command with on/off parameter
+    mq.bind("/sl_chase", function(action)
+        local config = require("modules.config")
+
+        if not action or action == "" then
+            -- Show current status
+            local isEnabled = config.useChaseCommands or false
+            util.printSmartLoot("Chase commands are currently: " .. (isEnabled and "ENABLED" or "DISABLED"), "info")
+            util.printSmartLoot("Usage: /sl_chase <on|off>", "info")
+            if isEnabled then
+                util.printSmartLoot("Pause command: " .. (config.chasePauseCommand or "not set"), "info")
+                util.printSmartLoot("Resume command: " .. (config.chaseResumeCommand or "not set"), "info")
+            end
+            return
+        end
+
+        action = action:lower()
+
+        if action == "on" then
+            config.useChaseCommands = true
+            if config.save then
+                config.save()
+            end
+            util.printSmartLoot("Chase commands ENABLED", "success")
+            util.printSmartLoot("Pause command: " .. (config.chasePauseCommand or "/luachase pause on"), "info")
+            util.printSmartLoot("Resume command: " .. (config.chaseResumeCommand or "/luachase pause off"), "info")
+            logging.log("[Bindings] Chase commands enabled via command")
+        elseif action == "off" then
+            config.useChaseCommands = false
+            if config.save then
+                config.save()
+            end
+            util.printSmartLoot("Chase commands DISABLED", "warning")
+            logging.log("[Bindings] Chase commands disabled via command")
+        elseif action == "pause" then
+            -- Execute pause command if chase is enabled
+            if config.useChaseCommands then
+                if config.executeChaseCommand then
+                    local success, msg = config.executeChaseCommand("pause")
+                    if success then
+                        util.printSmartLoot("Chase pause executed: " .. msg, "success")
+                    else
+                        util.printSmartLoot("Chase pause failed: " .. msg, "error")
+                    end
+                else
+                    -- Fallback
+                    local pauseCmd = config.chasePauseCommand or "/luachase pause on"
+                    mq.cmd(pauseCmd)
+                    util.printSmartLoot("Chase pause executed: " .. pauseCmd, "success")
+                end
+            else
+                util.printSmartLoot("Chase commands are disabled. Use /sl_chase on to enable.", "warning")
+            end
+        elseif action == "resume" then
+            -- Execute resume command if chase is enabled
+            if config.useChaseCommands then
+                if config.executeChaseCommand then
+                    local success, msg = config.executeChaseCommand("resume")
+                    if success then
+                        util.printSmartLoot("Chase resume executed: " .. msg, "success")
+                    else
+                        util.printSmartLoot("Chase resume failed: " .. msg, "error")
+                    end
+                else
+                    -- Fallback
+                    local resumeCmd = config.chaseResumeCommand or "/luachase pause off"
+                    mq.cmd(resumeCmd)
+                    util.printSmartLoot("Chase resume executed: " .. resumeCmd, "success")
+                end
+            else
+                util.printSmartLoot("Chase commands are disabled. Use /sl_chase on to enable.", "warning")
+            end
+        else
+            util.printSmartLoot("Invalid parameter: " .. action, "error")
+            util.printSmartLoot("Usage: /sl_chase <on|off|pause|resume>", "info")
+        end
+    end)
+
+    -- Add separate shortcut commands for convenience
+    mq.bind("/sl_chase_on", function()
+        mq.cmd("/sl_chase on")
+    end)
+
+    mq.bind("/sl_chase_off", function()
+        mq.cmd("/sl_chase off")
+    end)
+end
+
+local function bindTempRuleCommands()
+    mq.bind("/sl_addtemp", function(...)
+        local args = { ... }
+        if #args < 2 then
+            util.printSmartLoot("Usage: /sl_addtemp <itemname> <rule> [threshold]", "error")
+            util.printSmartLoot("Rules: Keep, Ignore, Destroy, KeepIfFewerThan", "info")
+            util.printSmartLoot("Example: /sl_addtemp \"Short Sword\" Keep", "info")
+            util.printSmartLoot("Example: /sl_addtemp \"Rusty Dagger\" KeepIfFewerThan 5", "info")
+            return
+        end
+
+        local itemName = args[1]
+        local rule = args[2]
+        local threshold = tonumber(args[3]) or 1
+
+        -- Validate rule
+        local validRules = { "Keep", "Ignore", "Destroy", "KeepIfFewerThan" }
+        local isValidRule = false
+        for _, validRule in ipairs(validRules) do
+            if rule:lower() == validRule:lower() then
+                rule = validRule -- Normalize case
+                isValidRule = true
+                break
+            end
+        end
+
+        if not isValidRule then
+            util.printSmartLoot("Invalid rule: " .. rule, "error")
+            util.printSmartLoot("Valid rules: Keep, Ignore, Destroy, KeepIfFewerThan", "info")
+            return
+        end
+
+        local tempRules = require("modules.temp_rules")
+        local success, err = tempRules.add(itemName, rule, threshold)
+        if success then
+            if rule == "KeepIfFewerThan" then
+                util.printSmartLoot("Added temporary rule: " .. itemName .. " -> " .. rule .. " (" .. threshold .. ")",
+                    "success")
+            else
+                util.printSmartLoot("Added temporary rule: " .. itemName .. " -> " .. rule, "success")
+            end
+        else
+            util.printSmartLoot("Failed to add temporary rule: " .. tostring(err), "error")
+        end
+    end)
+
+    mq.bind("/sl_listtemp", function()
+        local tempRules = require("modules.temp_rules")
+        local rules = tempRules.getAll()
+
+        if #rules == 0 then
+            util.printSmartLoot("No temporary rules active", "info")
+            util.printSmartLoot("AFK Farming Mode: INACTIVE", "warning")
+            return
+        end
+
+        util.printSmartLoot("=== Temporary Rules (" .. #rules .. " active) ===", "system")
+        util.printSmartLoot("AFK Farming Mode: ACTIVE", "success")
+
+        for _, rule in ipairs(rules) do
+            local displayRule, threshold = tempRules.parseRule(rule.rule)
+            if displayRule == "KeepIfFewerThan" then
+                util.printSmartLoot(
+                "  " ..
+                rule.itemName ..
+                " -> " .. displayRule .. " (" .. threshold .. ") [Added: " .. (rule.addedAt or "unknown") .. "]", "info")
+            else
+                util.printSmartLoot(
+                "  " .. rule.itemName .. " -> " .. displayRule .. " [Added: " .. (rule.addedAt or "unknown") .. "]",
+                    "info")
+            end
+        end
+    end)
+
+    mq.bind("/sl_removetemp", function(itemName)
+        if not itemName or itemName == "" then
+            util.printSmartLoot("Usage: /sl_removetemp <itemname>", "error")
+            return
+        end
+
+        local tempRules = require("modules.temp_rules")
+        if tempRules.remove(itemName) then
+            util.printSmartLoot("Removed temporary rule for: " .. itemName, "success")
+        else
+            util.printSmartLoot("No temporary rule found for: " .. itemName, "warning")
+        end
+    end)
+
+    mq.bind("/sl_cleartemp", function()
+        -- Confirm before clearing
+        util.printSmartLoot("Are you sure you want to clear ALL temporary rules?", "warning")
+        util.printSmartLoot("Type: /sl_cleartemp_confirm to confirm", "warning")
+    end)
+
+    mq.bind("/sl_cleartemp_confirm", function()
+        local tempRules = require("modules.temp_rules")
+        local count = tempRules.getCount()
+        tempRules.clearAll()
+        util.printSmartLoot("Cleared " .. count .. " temporary rules", "success")
+        util.printSmartLoot("AFK Farming Mode: INACTIVE", "warning")
+    end)
+
+    mq.bind("/sl_afkfarm", function(action)
+        local tempRules = require("modules.temp_rules")
+
+        if not action or action == "" then
+            -- Show status
+            local isActive = tempRules.isAFKFarmingActive()
+            local count = tempRules.getCount()
+
+            util.printSmartLoot("=== AFK Farming Mode Status ===", "system")
+            util.printSmartLoot("Status: " .. (isActive and "ACTIVE" or "INACTIVE"), isActive and "success" or "warning")
+            util.printSmartLoot("Temporary Rules: " .. count, "info")
+            util.printSmartLoot("Usage: /sl_afkfarm status|list|help", "info")
+        elseif action:lower() == "status" then
+            local count = tempRules.getCount()
+            local isActive = count > 0
+
+            util.printSmartLoot("AFK Farming Mode: " .. (isActive and "ACTIVE" or "INACTIVE"),
+                isActive and "success" or "warning")
+            util.printSmartLoot("Temporary Rules: " .. count, "info")
+
+            if isActive then
+                util.printSmartLoot("When items are encountered:", "info")
+                util.printSmartLoot("  1. Temporary rule will be applied", "info")
+                util.printSmartLoot("  2. Rule converts to permanent with discovered Item ID", "info")
+                util.printSmartLoot("  3. Temporary rule is removed", "info")
+            end
+        elseif action:lower() == "list" then
+            mq.cmd("/sl_listtemp")
+        elseif action:lower() == "help" then
+            util.printSmartLoot("=== AFK Farming Mode Help ===", "system")
+            util.printSmartLoot("Commands:", "info")
+            util.printSmartLoot("  /sl_addtemp <item> <rule> [threshold] - Add temporary rule", "info")
+            util.printSmartLoot("  /sl_listtemp - List all temporary rules", "info")
+            util.printSmartLoot("  /sl_removetemp <item> - Remove specific rule", "info")
+            util.printSmartLoot("  /sl_cleartemp - Clear all temporary rules", "info")
+            util.printSmartLoot("  /sl_afkfarm [status|list|help] - AFK farm status/help", "info")
+            util.printSmartLoot("Examples:", "info")
+            util.printSmartLoot("  /sl_addtemp \"Short Sword\" Keep", "info")
+            util.printSmartLoot("  /sl_addtemp \"Rusty Dagger\" KeepIfFewerThan 5", "info")
+            util.printSmartLoot("  /sl_addtemp \"Cloth Cap\" Destroy", "info")
+        else
+            util.printSmartLoot("Unknown action: " .. action, "error")
+            util.printSmartLoot("Valid actions: status, list, help", "info")
+        end
+    end)
+end
+
+local function bindUtilityCommands()
+    -- /sl_radius <number>
+    mq.bind("/sl_radius", function(value)
+        local n = tonumber(value)
+        if not n then
+            util.printSmartLoot("Usage: /sl_radius <number>", "error")
+            return
+        end
+        local config = require("modules.config")
+        local newv = config.setLootRadius(n)
+        util.printSmartLoot(string.format("Loot radius set to %d", newv), "success")
+    end)
+
+    -- /sl_range <number>
+    mq.bind("/sl_range", function(value)
+        local n = tonumber(value)
+        if not n then
+            util.printSmartLoot("Usage: /sl_range <number>", "error")
+            return
+        end
+        local config = require("modules.config")
+        local newv = config.setLootRange(n)
+        util.printSmartLoot(string.format("Loot range set to %d", newv), "success")
+    end)
+    
+    -- /sl_inventory <on|off|slots|autoinv>
+    mq.bind("/sl_inventory", function(action, value)
+        local SmartLootEngine = SmartLootEngine or require("modules.SmartLootEngine")
+        local config = require("modules.config")
+        
+        if not action or action == "" then
+            -- Show current settings
+            local enabled = SmartLootEngine.config.enableInventorySpaceCheck or false
+            local minSlots = SmartLootEngine.config.minFreeInventorySlots or 5
+            local autoInv = SmartLootEngine.config.autoInventoryOnLoot or false
+            
+            util.printSmartLoot("=== Inventory Settings ===", "info")
+            util.printSmartLoot("Inventory Check: " .. (enabled and "ON" or "OFF"), enabled and "success" or "warning")
+            if enabled then
+                util.printSmartLoot("Min Free Slots: " .. minSlots, "info")
+                util.printSmartLoot("Auto-Inventory: " .. (autoInv and "ON" or "OFF"), "info")
+            end
+            util.printSmartLoot("Usage: /sl_inventory <on|off|slots <n>|autoinv <on|off>>", "info")
+            return
+        end
+        
+        action = action:lower()
+        
+        if action == "on" then
+            SmartLootEngine.config.enableInventorySpaceCheck = true
+            if config.save then config.save() end
+            util.printSmartLoot("Inventory space checking enabled", "success")
+        elseif action == "off" then
+            SmartLootEngine.config.enableInventorySpaceCheck = false
+            if config.save then config.save() end
+            util.printSmartLoot("Inventory space checking disabled", "warning")
+        elseif action == "slots" then
+            local slots = tonumber(value)
+            if not slots then
+                util.printSmartLoot("Usage: /sl_inventory slots <number>", "error")
+                util.printSmartLoot("Current min free slots: " .. (SmartLootEngine.config.minFreeInventorySlots or 5), "info")
+                return
+            end
+            slots = math.max(1, math.min(30, slots))
+            SmartLootEngine.config.minFreeInventorySlots = slots
+            if config.save then config.save() end
+            util.printSmartLoot(string.format("Minimum free inventory slots set to %d", slots), "success")
+        elseif action == "autoinv" then
+            if not value or value == "" then
+                local current = SmartLootEngine.config.autoInventoryOnLoot or false
+                util.printSmartLoot("Auto-inventory on loot: " .. (current and "ON" or "OFF"), "info")
+                util.printSmartLoot("Usage: /sl_inventory autoinv <on|off>", "info")
+                return
+            end
+            
+            local autoInv = (value:lower() == "on" or value:lower() == "true")
+            SmartLootEngine.config.autoInventoryOnLoot = autoInv
+            if config.save then config.save() end
+            util.printSmartLoot("Auto-inventory on loot " .. (autoInv and "enabled" or "disabled"), autoInv and "success" or "warning")
+        else
+            util.printSmartLoot("Invalid action. Valid actions: on, off, slots, autoinv", "error")
+        end
+    end)
+    
+    -- /sl_itemannounce <all|ignored|none>
+    mq.bind("/sl_itemannounce", function(mode)
+        local config = require("modules.config")
+        
+        if not mode or mode == "" then
+            local current = config.getItemAnnounceMode and config.getItemAnnounceMode() or "all"
+            local description = config.getItemAnnounceModeDescription and config.getItemAnnounceModeDescription() or current
+            util.printSmartLoot("Current item announce mode: " .. description, "info")
+            util.printSmartLoot("Usage: /sl_itemannounce <all|ignored|none>", "info")
+            return
+        end
+        
+        mode = mode:lower()
+        local validModes = {"all", "ignored", "none"}
+        local isValid = false
+        for _, validMode in ipairs(validModes) do
+            if mode == validMode then
+                isValid = true
+                break
+            end
+        end
+        
+        if not isValid then
+            util.printSmartLoot("Invalid mode. Valid modes: all, ignored, none", "error")
+            return
+        end
+        
+        if config.setItemAnnounceMode then
+            local success, errorMsg = config.setItemAnnounceMode(mode)
+            if success then
+                local description = config.getItemAnnounceModeDescription and config.getItemAnnounceModeDescription() or mode
+                util.printSmartLoot("Item announce mode set to: " .. description, "success")
+            else
+                util.printSmartLoot("Failed to set item announce mode: " .. tostring(errorMsg), "error")
+            end
+        else
+            config.itemAnnounceMode = mode
+            if config.save then config.save() end
+            util.printSmartLoot("Item announce mode set to: " .. mode, "success")
+        end
+    end)
+    
+    -- /sl_loreannounce <on|off>
+    mq.bind("/sl_loreannounce", function(action)
+        local config = require("modules.config")
+        
+        if not action or action == "" then
+            local enabled = config.loreCheckAnnounce
+            if enabled == nil then enabled = true end
+            util.printSmartLoot("Lore conflict announcements: " .. (enabled and "ON" or "OFF"), enabled and "success" or "warning")
+            util.printSmartLoot("Usage: /sl_loreannounce <on|off>", "info")
+            return
+        end
+        
+        action = action:lower()
+        
+        if action == "on" or action == "true" or action == "1" then
+            config.loreCheckAnnounce = true
+            if config.save then config.save() end
+            util.printSmartLoot("Lore conflict announcements enabled", "success")
+        elseif action == "off" or action == "false" or action == "0" then
+            config.loreCheckAnnounce = false
+            if config.save then config.save() end
+            util.printSmartLoot("Lore conflict announcements disabled", "warning")
+        else
+            util.printSmartLoot("Invalid action. Use 'on' or 'off'", "error")
+        end
+    end)
+    
+    -- /sl_lootcommand <dannet|e3|bc>
+    mq.bind("/sl_lootcommand", function(type)
+        local config = require("modules.config")
+        
+        if not type or type == "" then
+            local current = config.lootCommandType or "dannet"
+            local displayNames = {
+                dannet = "DanNet",
+                e3 = "E3",
+                bc = "EQBC"
+            }
+            util.printSmartLoot("Current loot command type: " .. (displayNames[current] or current), "info")
+            if current == "dannet" then
+                local channel = config.dannetBroadcastChannel or "group"
+                util.printSmartLoot("DanNet broadcast channel: " .. channel, "info")
+            end
+            util.printSmartLoot("Usage: /sl_lootcommand <dannet|e3|bc>", "info")
+            return
+        end
+        
+        type = type:lower()
+        local validTypes = {"dannet", "e3", "bc"}
+        local isValid = false
+        for _, validType in ipairs(validTypes) do
+            if type == validType then
+                isValid = true
+                break
+            end
+        end
+        
+        if not isValid then
+            util.printSmartLoot("Invalid type. Valid types: dannet, e3, bc", "error")
+            return
+        end
+        
+        config.lootCommandType = type
+        if config.save then config.save() end
+        
+        local displayNames = {
+            dannet = "DanNet",
+            e3 = "E3",
+            bc = "EQBC"
+        }
+        util.printSmartLoot("Loot command type set to: " .. displayNames[type], "success")
+    end)
+    
+    -- /sl_dannet_channel <group|raid>
+    mq.bind("/sl_dannet_channel", function(channel)
+        local config = require("modules.config")
+        
+        if not channel or channel == "" then
+            local current = config.dannetBroadcastChannel or "group"
+            util.printSmartLoot("Current DanNet broadcast channel: " .. current, "info")
+            util.printSmartLoot("Usage: /sl_dannet_channel <group|raid>", "info")
+            return
+        end
+        
+        channel = channel:lower()
+        if channel ~= "group" and channel ~= "raid" then
+            util.printSmartLoot("Invalid channel. Valid channels: group, raid", "error")
+            return
+        end
+        
+        config.dannetBroadcastChannel = channel
+        if config.save then config.save() end
+        
+        local channelDisplay = channel == "group" and "Group (/dgga)" or "Raid (/dgra)"
+        util.printSmartLoot("DanNet broadcast channel set to: " .. channelDisplay, "success")
+    end)
+    mq.bind("/sl_help", function()
+        if uiHelp then
+            uiHelp.toggle()
+            local isVisible = uiHelp.isVisible()
+            util.printSmartLoot("Help window " .. (isVisible and "opened" or "closed"), isVisible and "success" or "info")
+        else
+            -- Fallback to text help if UI module not available
+            util.printSmartLoot("=== SmartLoot Command Help ===", "system")
+            util.printSmartLoot("Getting Started:", "info")
+            util.printSmartLoot("  /sl_getstarted - Complete getting started guide", "info")
+            util.printSmartLoot("Engine Control:", "info")
+            util.printSmartLoot("  /sl_pause [on|off] - Pause/resume engine", "info")
+            util.printSmartLoot("  /sl_doloot - Trigger once mode", "info")
+            util.printSmartLoot("  /sl_combatloot - Loot all corpses ignoring combat, then revert", "info")
+            util.printSmartLoot("  /sl_rg_trigger - Trigger RGMain mode", "info")
+            util.printSmartLoot("  /sl_emergency_stop - Emergency stop", "info")
+            util.printSmartLoot("  /sl_resume - Resume from emergency stop", "info")
+            util.printSmartLoot("UI Control:", "info")
+            util.printSmartLoot("  /sl_toggle_hotbar - Toggle hotbar visibility", "info")
+            util.printSmartLoot("  /sl_reviewunknowns [cancel] - Open/cancel batch unknown-item review", "info")
+            util.printSmartLoot("  /sl_debug - Toggle debug window", "info")
+            util.printSmartLoot("  /sl_debug level [X] - Set/show debug level (0-5 or name)", "info")
+            util.printSmartLoot("  /sl_stats [show|hide|toggle|reset|compact] - Live stats", "info")
+            util.printSmartLoot("Reporting:", "info")
+            util.printSmartLoot("  /sl_report [show|hide|toggle|all|me] - Session loot report", "info")
+            util.printSmartLoot("Status & Debug:", "info")
+            util.printSmartLoot("  /sl_engine_status - Show engine status", "info")
+            util.printSmartLoot("  /sl_mode_status - Show mode status", "info")
+            util.printSmartLoot("  /sl_waterfall_status - Show waterfall status", "info")
+            util.printSmartLoot("  /sl_waterfall_debug - Waterfall debug info", "info")
+            util.printSmartLoot("  /sl_waterfall_complete - Manually check waterfall completion", "info")
+            util.printSmartLoot("Testing:", "info")
+            util.printSmartLoot("  /sl_test_peer_complete <peer> - Simulate peer completion", "info")
+            util.printSmartLoot("Peer Management:", "info")
+            util.printSmartLoot("  /sl_check_peers - Check peer connections", "info")
+            util.printSmartLoot("  /sl_refresh_mode - Refresh mode based on peers", "info")
+            util.printSmartLoot("  /sl_mode <mode> - Set loot mode (main|background|rgmain|rgonce|once|combatloot)", "info")
+            util.printSmartLoot("  /sl_peer_monitor [on|off] - Toggle peer monitoring", "info")
+            util.printSmartLoot("Maintenance:", "info")
+            util.printSmartLoot("  /sl_clearcache - Clear corpse cache", "info")
+            util.printSmartLoot("  /sl_rulescache - Refresh loot rules cache", "info")
+            util.printSmartLoot("  /sl_cleanup - Open duplicate peer cleanup tool", "info")
+            util.printSmartLoot("  /sl_help - Show this help", "info")
+            util.printSmartLoot("Chat & Chase Control:", "info")
+            util.printSmartLoot("  /sl_chat <mode> - Set chat output (raid|group|guild|custom|silent)", "info")
+            util.printSmartLoot("  /sl_chase <on|off|pause|resume> - Control chase commands", "info")
+            util.printSmartLoot("  /sl_chase_on - Enable chase commands", "info")
+            util.printSmartLoot("  /sl_chase_off - Disable chase commands", "info")
+            util.printSmartLoot("Inventory & Announce & Loot Command:", "info")
+            util.printSmartLoot("  /sl_inventory <on|off|slots <n>|autoinv <on|off>>", "info")
+            util.printSmartLoot("  /sl_itemannounce <all|ignored|none>", "info")
+            util.printSmartLoot("  /sl_loreannounce <on|off>", "info")
+            util.printSmartLoot("  /sl_lootcommand <dannet|e3|bc>", "info")
+            util.printSmartLoot("  /sl_dannet_channel <group|raid>", "info")
+            util.printSmartLoot("AFK Farming:", "info")
+            util.printSmartLoot("  /sl_addtemp <item> <rule> [threshold] - Add temporary rule", "info")
+            util.printSmartLoot("  /sl_listtemp - List all temporary rules", "info")
+            util.printSmartLoot("  /sl_removetemp <item> - Remove specific rule", "info")
+            util.printSmartLoot("  /sl_cleartemp - Clear all temporary rules", "info")
+            util.printSmartLoot("  /sl_afkfarm [status|list|help] - AFK farm status/help", "info")
+        end
+    end)
+
+    mq.bind("/sl_getstarted", function()
+        if lootUI then
+            lootUI.showGettingStartedPopup = not lootUI.showGettingStartedPopup
+        end
+    end)
+
+    mq.bind("/sl_save", function()
+        config.save()
+    end)
+
+    mq.bind("/sl_cleanup", function()
+        if lootUI then
+            -- Initialize cleanup popup if it doesn't exist
+            if not lootUI.duplicateCleanupPopup then
+                lootUI.duplicateCleanupPopup = {
+                    isOpen = false,
+                    scanned = false,
+                    duplicates = {},
+                    selections = {}
+                }
+            end
+            
+            lootUI.duplicateCleanupPopup.isOpen = true
+            util.printSmartLoot("Opening duplicate cleanup tool...", "info")
+        else
+            util.printSmartLoot("Loot UI not available", "warning")
+        end
+    end)
+end
+
+-- Session loot report: /sl_report [all|me] [limit]
+function bindings.bindSessionReport()
+    mq.bind("/sl_report", function(arg)
+        if not SmartLootEngine or not lootHistory then
+            util.printSmartLoot("SmartLoot modules not available", "warning")
+            return
+        end
+
+        -- Initialize popup state if needed
+        if not lootUI.sessionReportPopup then
+            lootUI.sessionReportPopup = {
+                isOpen = false,
+                scope = "all",
+                limit = 20,
+                rows = nil,
+                needsFetch = false,
+                autoRefresh = true,
+                refreshIntervalMs = 5000,
+                lastRefreshAt = 0
+            }
+        end
+
+        -- Apply args (show|hide|toggle|all|me)
+        if arg and arg ~= "" then
+            local a = string.lower(arg)
+            if a == "show" then
+                lootUI.sessionReportPopup.isOpen = true
+            elseif a == "hide" then
+                lootUI.sessionReportPopup.isOpen = false
+            elseif a == "toggle" then
+                lootUI.sessionReportPopup.isOpen = not (lootUI.sessionReportPopup.isOpen or false)
+            elseif a == "me" or a == "all" then
+                lootUI.sessionReportPopup.scope = a
+                lootUI.sessionReportPopup.isOpen = true
+            end
+        else
+            lootUI.sessionReportPopup.isOpen = true
+        end
+        lootUI.sessionReportPopup.needsFetch = true
+        util.printSmartLoot("Session report " .. (lootUI.sessionReportPopup.isOpen and "opened" or "closed") .. ".", "info")
+    end)
+end
+
+-- ============================================================================
+-- MAIN REGISTRATION FUNCTION
+-- ============================================================================
+
+function bindings.registerAllBindings()
+    bindDirectedMode()
+    bindHotbarToggle()
+    bindPauseResume()
+    bindUnknownReviewCommands()
+    bindLiveStats()
+    bindPeerCommands()
+    bindWhitelistOnly()
+    bindDefaultActionCommands()
+    -- New: peers-first/items-first selector binding
+    mq.bind("/sl_peer_selector", function(strategy)
+        local s = (strategy or ""):lower()
+        if s ~= "peers" and s ~= "items" and s ~= "peers_first" and s ~= "items_first" then
+            util.printSmartLoot("Usage: /sl_peer_selector <peers|items>", "info")
+            return
+        end
+        if not SmartLootEngine or not SmartLootEngine.config then
+            util.printSmartLoot("SmartLootEngine not available", "error")
+            return
+        end
+
+        local normalized = (s == "peers" or s == "peers_first") and "peers_first" or "items_first"
+
+        SmartLootEngine.config.peerSelectionStrategy = normalized
+
+        if SmartLootEngine.state and SmartLootEngine.state.settings then
+            SmartLootEngine.state.settings.peerSelectionStrategy = normalized
+        end
+
+        if config and config.setPeerSelectionStrategy then
+            config.setPeerSelectionStrategy(normalized)
+        else
+            config.peerSelectionStrategy = normalized
+            if config.save then pcall(config.save) end
+        end
+
+        util.printSmartLoot("Peer selection strategy set to: " .. normalized, "success")
+    end)
+    bindStatusCommands()
+    bindEngineCommands()
+    bindWaterfallCommands()
+    bindDebugCommands()
+    bindChatCommands()
+    bindChaseCommands()
+    bindTempRuleCommands()
+    bindUtilityCommands()
+    -- New: session loot report
+    if bindings.bindSessionReport then bindings.bindSessionReport() end
+
+    logging.log("[Bindings] All command bindings registered")
+end
+
+-- ============================================================================
+-- CLEANUP FUNCTION
+-- ============================================================================
+
+function bindings.cleanup()
+    -- MQ2 doesn't have explicit unbind, but we can clear references
+    SmartLootEngine = nil
+    lootUI = nil
+    modeHandler = nil
+    waterfallTracker = nil
+    uiLiveStats = nil
+    uiHelp = nil
+
+    logging.log("[Bindings] Module cleaned up")
+end
+
+-- ============================================================================
+-- UTILITY FUNCTIONS
+-- ============================================================================
+
+function bindings.listBindings()
+    local commands = {
+        "/sl_pause", "/sl_doloot", "/sl_combatloot", "/sl_rg_trigger", "/sl_emergency_stop", "/sl_resume",
+        "/sl_toggle_hotbar", "/sl_reviewunknowns", "/sl_debug", "/sl_stats",
+        "/sl_engine_status", "/sl_mode_status", "/sl_waterfall_status", "/sl_waterfall_debug", "/sl_waterfall_complete",
+        "/sl_test_peer_complete",
+        "/sl_check_peers", "/sl_refresh_mode", "/sl_mode", "/sl_peer_monitor",
+        "/sl_chat", "/sl_chase", "/sl_chase_on", "/sl_chase_off",
+        "/sl_addtemp", "/sl_removetemp", "/sl_cleartemp", "/sl_afkfarm",
+        "/sl_clearcache", "/sl_rulescache", "/sl_cleanup", "/sl_help", "/sl_getstarted", "/sl_version",
+        "/sl_report",
+        -- New CLI settings
+        "/sl_inventory", "/sl_itemannounce", "/sl_loreannounce", "/sl_lootcommand", "/sl_dannet_channel",
+        "/sl_radius", "/sl_range"
+    }
+
+    util.printSmartLoot("=== Registered SmartLoot Commands ===", "system")
+    for _, cmd in ipairs(commands) do
+        util.printSmartLoot("  " .. cmd, "info")
+    end
+    util.printSmartLoot("Use /sl_help for detailed command help", "info")
+end
+
+return bindings

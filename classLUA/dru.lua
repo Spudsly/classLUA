@@ -1,6 +1,7 @@
 local mq = require('mq')
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 
@@ -87,19 +88,7 @@ local function useChestClicky()
     return false
 end
 
-local function doAbilities()
-    -- Wand in ranged slot (slot-based)
-    if not mq.TLO.Me.Casting() then
-        local ranged = mq.TLO.InvSlot("ranged").Item
-        if ranged() then
-            local timer = ranged.TimerReady()
-            if timer ~= nil and timer == 0 then
-                mq.cmd('/itemnotify 11 rightmouseup')
-                mq.delay(350)
-            end
-        end
-    end
-
+local function doSelfBuffs()
     useBackBuff()
     useRightwristClicky()
     useDenyDeath()
@@ -140,8 +129,24 @@ local function doAbilities()
         end
     end
 
-    useChestClicky()
     useCharmClicky()
+end
+
+local function doAbilities()
+    -- Wand in ranged slot (slot-based)
+    if not mq.TLO.Me.Casting() then
+        local ranged = mq.TLO.InvSlot("ranged").Item
+        if ranged() then
+            local timer = ranged.TimerReady()
+            if timer ~= nil and timer == 0 then
+                mq.cmd('/itemnotify 11 rightmouseup')
+                mq.delay(350)
+            end
+        end
+    end
+
+    doSelfBuffs()
+    useChestClicky()
 
     -- Fountain of Karana
     if mq.TLO.Me.SpellReady("Fountain of Karana")() then
@@ -177,12 +182,16 @@ end
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
 
     targetID = id
     engaged = true
+    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -196,21 +205,22 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     print("Disengaged")
 end)
 
-print("Druid combat script loaded. Use /engage ### to start, /disengage to stop")
+print("Druid combat script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    end
-
-    if engaged and targetValid() then
+    elseif engaged and targetValid() then
         mq.cmd('/attack on')
         doAbilities()
     end

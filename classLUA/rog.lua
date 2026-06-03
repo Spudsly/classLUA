@@ -11,6 +11,7 @@ local combatBuffClickies = {
 }
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 
@@ -197,15 +198,26 @@ local function useCharmClicky()
     return true
 end
 
-local function doAbilities()
+local function doSelfBuffs()
     useBackBuff()
     useEarringMysticAges()
     useRightwristClicky()
     useFuriousSentinel()
+    useDenyDeath()
+
+    -- Thief's Eyes
+    if (mq.TLO.Me.Song("Thief's eyes").ID() or 0) == 0 then
+        mq.cmd("/disc Thief's eyes")
+        mq.delay(50)
+    end
+
+    useCharmClicky()
+end
+
+local function doAbilities()
+    doSelfBuffs()
 
     useSkill("Backstab")
-
-    useDenyDeath()
 
     local combatClickies = {
         "Nightshade, Blade of Entropy",
@@ -213,12 +225,6 @@ local function doAbilities()
     }
     for _, name in ipairs(combatClickies) do
         useCombatClicky(name)
-    end
-
-    -- Thief's Eyes
-    if (mq.TLO.Me.Song("Thief's eyes").ID() or 0) == 0 then
-        mq.cmd("/disc Thief's eyes")
-        mq.delay(50)
     end
 
     useRoguesFury()
@@ -239,20 +245,22 @@ local function doAbilities()
 
     -- Pendant of Mayong Mistmoore
     useCombatClicky("Pendant of Mayong Mistmoore")
-
-    useCharmClicky()
 end
 
 -- Bind the /engage command
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
 
     targetID = id
     engaged = true
+    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -267,23 +275,22 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     print("Disengaged")
 end)
 
-print("Rogue combat script loaded. Use /engage ### to start, /disengage to stop")
+print("Rogue combat script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    -- Check if we should disengage (target dead or gone)
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    end
-
-    -- Only use abilities when engaged and valid target
-    if engaged and targetValid() then
+    elseif engaged and targetValid() then
         mq.cmd('/attack on')
         doAbilities()
     end

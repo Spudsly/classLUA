@@ -1,6 +1,7 @@
 local mq = require('mq')
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 
@@ -97,7 +98,7 @@ local function getGemByName(name)
     return nil
 end
 
-local function doAbilities()
+local function doSelfBuffs()
     useBackBuff()
     useRightwristClicky()
 
@@ -139,6 +140,10 @@ local function doAbilities()
             mq.delay(50)
         end
     end
+end
+
+local function doAbilities()
+    doSelfBuffs()
 
     -- Ring of the Mindbender (must be equipped)
     if inCombat() then
@@ -196,12 +201,16 @@ end
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
 
     targetID = id
     engaged = true
+    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -216,21 +225,22 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     print("Disengaged")
 end)
 
-print("Enchanter combat script loaded. Use /engage ### to start, /disengage to stop")
+print("Enchanter combat script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    end
-
-    if engaged and targetValid() then
+    elseif engaged and targetValid() then
         mq.cmd('/attack on')
         doAbilities()
     end

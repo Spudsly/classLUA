@@ -1,8 +1,10 @@
 local mq = require('mq')
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
+local epicTimer = 0
 
 local function checkZoneChange()
     local currentZone = mq.TLO.Zone.ID()
@@ -75,7 +77,7 @@ local function useCharmClicky()
     return true
 end
 
-local function doAbilities()
+local function doSelfBuffs()
     useBackBuff()
     useDenyDeath()
     useRightwristClicky()
@@ -113,6 +115,29 @@ local function doAbilities()
         mq.cmd('/casting "Yaulp X"')
         mq.delay(50)
     end
+end
+
+local function doAbilities()
+    doSelfBuffs()
+
+    -- Celestial Regeneration (epic weapon augment, 30s os.clock timer)
+    if inCombat() then
+        local now = os.clock()
+        if now - epicTimer >= 30 then
+            local pubiseTarget = mq.TLO.Spawn("=Pubise pc")
+            if pubiseTarget() then
+                mq.cmdf('/tar id %d', pubiseTarget.ID())
+                mq.delay(50)
+                mq.cmd('/itemnotify 13 rightmouseup')
+                epicTimer = os.clock()
+                mq.delay(50)
+                if targetID then
+                    mq.cmdf('/tar id %d', targetID)
+                    mq.delay(50)
+                end
+            end
+        end
+    end
 
     -- Ring of the High Priest
     if inCombat() then
@@ -144,12 +169,16 @@ end
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
 
     targetID = id
     engaged = true
+    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -163,21 +192,22 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     print("Disengaged")
 end)
 
-print("Cleric combat script loaded. Use /engage ### to start, /disengage to stop")
+print("Cleric combat script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    end
-
-    if engaged and targetValid() then
+    elseif engaged and targetValid() then
         mq.cmd('/attack on')
         doAbilities()
     end

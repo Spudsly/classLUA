@@ -10,6 +10,7 @@ local spells = {
 }
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 
@@ -54,6 +55,10 @@ local function useBackBuff()
     return false
 end
 
+local function inCombat()
+    return mq.TLO.Me.CombatState() == "COMBAT"
+end
+
 -- Check if target is valid and alive
 local function targetValid()
     if not targetID then return false end
@@ -62,16 +67,76 @@ local function targetValid()
     return spawn.Type() == "NPC" and spawn.CurrentHPs() > 0
 end
 
+local function doSelfBuffs()
+    useBackBuff()
+
+    -- Strength of Direwind (pet buff, pet level > 78)
+    local pet = mq.TLO.Me.Pet
+    if pet() and (pet.Level() or 0) > 78 and mq.TLO.Me.SpellReady("Strength of Direwind")() then
+        local petBuff = mq.TLO.Pet.Buff("Strength of Direwind")
+        if not petBuff() then
+            mq.cmd('/casting 33358')
+            mq.delay(50)
+        end
+    end
+end
+
+local function doAbilities()
+    doSelfBuffs()
+
+    -- Don't interrupt casting
+    if not mq.TLO.Me.Casting() then
+        -- 1. Try equipped ranged item first (slot-based)
+        local ranged = mq.TLO.InvSlot("ranged").Item
+        local usedWand = false
+        if ranged() then
+            local timer = ranged.TimerReady()
+            if timer ~= nil and timer == 0 then
+                mq.cmd('/itemnotify 11 rightmouseup')
+                mq.delay(350)
+                usedWand = true
+            end
+        end
+        if not usedWand then
+            -- 2. Try spells in order
+            for _, spellName in ipairs(spells) do
+                local gem = getGemByName(spellName)
+                if gem and mq.TLO.Me.SpellReady(gem)() then
+                    mq.cmdf('/cast %d', gem)
+                    mq.delay(350)
+                    break
+                end
+            end
+        end
+    end
+
+    -- Powersource slot click (Brain of Cazic Thule / The Necronomicon / any, in-combat only)
+    if inCombat() then
+        local ps = mq.TLO.Me.Inventory("Powersource")
+        if ps() then
+            local timer = ps.TimerReady()
+            if timer ~= nil and timer == 0 then
+                mq.cmd('/itemnotify powersource rightmouseup')
+                mq.delay(50)
+            end
+        end
+    end
+end
+
 -- Bind the /engage command
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
     
     targetID = id
     engaged = true
+    buffMode = false
     
     -- Target the mob and send pet
     mq.cmdf('/tar id %d', targetID)
@@ -88,80 +153,24 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     print("Disengaged")
 end)
 
-print("Magician nuke script loaded. Use /engage ### to start, /disengage to stop")
+print("Magician nuke script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    -- Check if we should disengage (target dead or gone)
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    end
-    
-    -- Ensure autoattack stays on
-    if engaged and targetValid() then
+    elseif engaged and targetValid() then
         mq.cmd('/attack on')
-    end
-
-    -- Back slot buff (Ancient Stonewall)
-    if engaged and targetValid() then
-        useBackBuff()
-    end
-
-    -- Only cast when engaged and valid target
-    if engaged and targetValid() then
-        -- Don't interrupt casting
-        if not mq.TLO.Me.Casting() then
-            -- 1. Try equipped ranged item first (slot-based)
-            local ranged = mq.TLO.InvSlot("ranged").Item
-            local usedWand = false
-            if ranged() then
-                local timer = ranged.TimerReady()
-                if timer ~= nil and timer == 0 then
-                    mq.cmd('/itemnotify 11 rightmouseup')
-                    mq.delay(350)
-                    usedWand = true
-                end
-            end
-            if not usedWand then
-                -- 2. Try spells in order
-                for _, spellName in ipairs(spells) do
-                    local gem = getGemByName(spellName)
-                    if gem and mq.TLO.Me.SpellReady(gem)() then
-                        mq.cmdf('/cast %d', gem)
-                        mq.delay(350)
-                        break
-                    end
-                end
-            end
-        end
-    end
-
-    -- Strength of Direwind (pet buff, pet level > 78)
-    local pet = mq.TLO.Me.Pet
-    if pet() and (pet.Level() or 0) > 78 and mq.TLO.Me.SpellReady("Strength of Direwind")() then
-        local petBuff = mq.TLO.Pet.Buff("Strength of Direwind")
-        if not petBuff() then
-            mq.cmd('/casting 33358')
-            mq.delay(50)
-        end
-    end
-
-    -- Powersource slot click (Brain of Cazic Thule / The Necronomicon / any)
-    if engaged and targetValid() then
-        local ps = mq.TLO.Me.Inventory("Powersource")
-        if ps() then
-            local timer = ps.TimerReady()
-            if timer ~= nil and timer == 0 then
-                mq.cmd('/itemnotify powersource rightmouseup')
-                mq.delay(50)
-            end
-        end
+        doAbilities()
     end
 
     mq.delay(100)

@@ -25,6 +25,7 @@ local combatBuffClickies = {
 }
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 
@@ -206,7 +207,7 @@ local function useDenyDeath()
     return true
 end
 
-local function doAbilities()
+local function doSelfBuffs()
     useBackBuff()
     useEarringMysticAges()
     useRightwristClicky()
@@ -220,6 +221,12 @@ local function doAbilities()
         mq.delay(50)
     end
 
+    useCharmClicky()
+end
+
+local function doAbilities()
+    doSelfBuffs()
+
     -- Dragon Fang
     if inCombat() and mq.TLO.Me.CombatAbilityReady("Dragon Fang")() then
         mq.cmdf('/disc "%s"', "Dragon Fang")
@@ -231,19 +238,22 @@ local function doAbilities()
     useAltAbility("Zan Fi's Whistle")
     useChestClicky()
     useCombatClicky("Pendant of Mayong Mistmoore")
-    useCharmClicky()
 end
 
 -- Bind the /engage command
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
 
     targetID = id
     engaged = true
+    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -258,23 +268,22 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     print("Disengaged")
 end)
 
-print("Monk combat script loaded. Use /engage ### to start, /disengage to stop")
+print("Monk combat script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    -- Check if we should disengage (target dead or gone)
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    end
-
-    -- Only use abilities when engaged and valid target
-    if engaged and targetValid() then
+    elseif engaged and targetValid() then
         mq.cmd('/attack on')
         doAbilities()
     end

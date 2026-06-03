@@ -1,9 +1,20 @@
 local mq = require('mq')
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 local epicTimer = 0
+
+local function getGemByName(name)
+    for i = 1, 12 do
+        local gem = mq.TLO.Me.Gem(i)
+        if gem() and gem.Name() == name then
+            return i
+        end
+    end
+    return nil
+end
 
 local function checkZoneChange()
     local currentZone = mq.TLO.Zone.ID()
@@ -85,41 +96,54 @@ local function useDenyDeath()
     return true
 end
 
-local function doAbilities()
+local function doSelfBuffs()
     useBackBuff()
     useRightwristClicky()
     useFuriousSentinel()
     useDenyDeath()
+
+    -- Secrets' Secret Ranger Secrets II (find by gem name)
+    local secretsGem = getGemByName("Secrets' Secret Ranger Secrets II")
+    if secretsGem and mq.TLO.Me.SpellReady(secretsGem)() and (mq.TLO.Me.Buff("Secrets' Secret Ranger Secrets II").ID() or 0) == 0 then
+        mq.cmdf('/cast %d', secretsGem)
+        mq.delay(50)
+    end
+
+    -- Relentless Hunt (find by gem name, can appear in buff or song window)
+    local huntGem = getGemByName("Relentless Hunt")
+    if huntGem and mq.TLO.Me.SpellReady(huntGem)() and (mq.TLO.Me.Buff("Relentless Hunt").ID() or 0) == 0 and (mq.TLO.Me.Song("Relentless Hunt").ID() or 0) == 0 then
+        mq.cmdf('/cast %d', huntGem)
+        mq.delay(50)
+    end
+
+    -- Howl of the Huntmaster III (find by gem name)
+    local howlGem = getGemByName("Howl of the Huntmaster III")
+    if howlGem and mq.TLO.Me.SpellReady(howlGem)() and (mq.TLO.Me.Buff("Howl of the Huntmaster III").ID() or 0) == 0 then
+        mq.cmdf('/cast %d', howlGem)
+        mq.delay(50)
+    end
+end
+
+local function doAbilities()
+    doSelfBuffs()
     useChestClicky()
 
-    -- Secrets' Secret Ranger Secrets II
-    if (mq.TLO.Me.Buff("Secrets' Secret Ranger Secrets II").ID() or 0) == 0 then
-        mq.cmd('/casting "10741"')
-        mq.delay(50)
-    end
-
-    -- Relentless Hunt
-    if (mq.TLO.Me.Buff("Relentless Hunt").ID() or 0) == 0 then
-        mq.cmd('/casting "33385"')
-        mq.delay(50)
-    end
-
-    -- Howl of the Huntmaster III
-    if (mq.TLO.Me.Buff("Howl of the Huntmaster III").ID() or 0) == 0 then
-        mq.cmd('/casting "11937"')
-        mq.delay(50)
-    end
-
-    -- Sarthin's Secret Power Ranger III
-    if inCombat() and mq.TLO.Cast.Ready("Sarthin's Secret Power Ranger III")() then
-        mq.cmd('/casting "33385"')
-        mq.delay(50)
+    -- Sarthin's Secret Power Ranger III (4min recast, in-combat only)
+    if inCombat() then
+        local gem = getGemByName("Sarthin's Secret Power Ranger III")
+        if gem and mq.TLO.Me.SpellReady(gem)() then
+            mq.cmdf('/cast %d', gem)
+            mq.delay(50)
+        end
     end
 
     -- Sarthin's Secret Power Ranger II
-    if inCombat() and mq.TLO.Cast.Ready("Sarthin's Secret Power Ranger II")() then
-        mq.cmd('/casting "41876"')
-        mq.delay(50)
+    if inCombat() then
+        local gem = getGemByName("Sarthin's Secret Power Ranger II")
+        if gem and mq.TLO.Me.SpellReady(gem)() then
+            mq.cmdf('/cast %d', gem)
+            mq.delay(50)
+        end
     end
 
     -- Ring of the Huntmaster (slot 16)
@@ -149,12 +173,16 @@ end
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
 
     targetID = id
     engaged = true
+    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -168,21 +196,22 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     print("Disengaged")
 end)
 
-print("Ranger combat script loaded. Use /engage ### to start, /disengage to stop")
+print("Ranger combat script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    end
-
-    if engaged and targetValid() then
+    elseif engaged and targetValid() then
         mq.cmd('/attack on')
         doAbilities()
     end

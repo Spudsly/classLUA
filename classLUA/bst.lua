@@ -1,6 +1,7 @@
 local mq = require('mq')
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 
@@ -27,6 +28,16 @@ local function checkZoneChange()
             targetID = nil
         end
     end
+end
+
+local function getGemByName(name)
+    for i = 1, 12 do
+        local gem = mq.TLO.Me.Gem(i)
+        if gem() and gem.Name() == name then
+            return i
+        end
+    end
+    return nil
 end
 
 local function targetValid()
@@ -81,8 +92,9 @@ end
 
 local function trySpells()
     for _, spellName in ipairs(spells) do
-        if mq.TLO.Me.SpellReady(spellName)() then
-            mq.cmdf('/cast "%s"', spellName)
+        local gem = getGemByName(spellName)
+        if gem and mq.TLO.Me.SpellReady(gem)() then
+            mq.cmdf('/cast %d', gem)
             mq.delay(350)
             return true
         end
@@ -90,7 +102,7 @@ local function trySpells()
     return false
 end
 
-local function doAbilities()
+local function doSelfBuffs()
     useBackBuff()
 
     -- Painfully Gorgeous (right ear)
@@ -140,6 +152,16 @@ local function doAbilities()
 
     useDenyDeath()
 
+    -- Call of the Alpha I
+    if (mq.TLO.Me.Buff("Call of the Alpha I").ID() or 0) == 0 then
+        mq.cmd('/cast "Call of the Alpha I"')
+        mq.delay(50)
+    end
+end
+
+local function doAbilities()
+    doSelfBuffs()
+
     -- Chest clicky
     if inCombat() then
         local chest = mq.TLO.Me.Inventory("Chest")
@@ -147,12 +169,6 @@ local function doAbilities()
             mq.cmd('/itemnotify chest rightmouseup')
             mq.delay(50)
         end
-    end
-
-    -- Call of the Alpha I
-    if (mq.TLO.Me.Buff("Call of the Alpha I").ID() or 0) == 0 then
-        mq.cmd('/cast "Call of the Alpha I"')
-        mq.delay(50)
     end
 
     -- Combat rotation: disc then spells (both fire independently like the macro)
@@ -172,12 +188,16 @@ end
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
 
     targetID = id
     engaged = true
+    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -192,21 +212,22 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     print("Disengaged")
 end)
 
-print("Beastlord combat script loaded. Use /engage ### to start, /disengage to stop")
+print("Beastlord combat script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    end
-
-    if engaged and targetValid() then
+    elseif engaged and targetValid() then
         mq.cmd('/attack on')
         doAbilities()
     end

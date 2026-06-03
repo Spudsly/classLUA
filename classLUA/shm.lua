@@ -1,6 +1,7 @@
 local mq = require('mq')
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 
@@ -94,6 +95,34 @@ local function useFuriousSentinel()
     return true
 end
 
+local function doSelfBuffs()
+    useRightwristClicky()
+
+    -- Ancestral Harmony (right ear)
+    if (mq.TLO.Me.Buff("Ancestral Harmony").ID() or 0) == 0 then
+        local rightEar = mq.TLO.Me.Inventory("Rightear")
+        if rightEar() and (rightEar.Name() or ""):find("Ascended Earring of the Wild Ages Rank I", 1, true) then
+            mq.cmd('/itemnotify rightear rightmouseup')
+            mq.delay(50)
+        end
+    end
+
+    useBackBuff()
+    useFuriousSentinel()
+    useDenyDeath()
+
+    -- Croton's Empowering Scepter (click from inventory)
+    if (mq.TLO.Me.Buff("Wisest Healer II").ID() or 0) == 0 then
+        local scepter = mq.TLO.FindItem("=Croton's Empowering Scepter")
+        if scepter() and mq.TLO.Cast.Ready("Croton's Empowering Scepter")() then
+            mq.cmd('/itemnotify "Croton\'s Empowering Scepter" rightmouseup')
+            mq.delay(50)
+        end
+    end
+
+    useCharmClicky()
+end
+
 local function doAbilities()
     -- Wand in ranged slot (slot-based)
     if not mq.TLO.Me.Casting() then
@@ -119,30 +148,7 @@ local function doAbilities()
         end
     end
 
-    useRightwristClicky()
-
-    -- Ancestral Harmony (right ear)
-    if (mq.TLO.Me.Buff("Ancestral Harmony").ID() or 0) == 0 then
-        local rightEar = mq.TLO.Me.Inventory("Rightear")
-        if rightEar() and (rightEar.Name() or ""):find("Ascended Earring of the Wild Ages Rank I", 1, true) then
-            mq.cmd('/itemnotify rightear rightmouseup')
-            mq.delay(50)
-        end
-    end
-
-    useBackBuff()
-    useFuriousSentinel()
-    useDenyDeath()
-
-    -- Croton's Empowering Scepter (click from inventory)
-    if (mq.TLO.Me.Buff("Wisest Healer II").ID() or 0) == 0 then
-        local scepter = mq.TLO.FindItem("=Croton's Empowering Scepter")
-        if scepter() and mq.TLO.Cast.Ready("Croton's Empowering Scepter")() then
-            mq.cmd('/itemnotify "Croton\'s Empowering Scepter" rightmouseup')
-            mq.delay(50)
-        end
-    end
-
+    doSelfBuffs()
     useChestClicky()
 
     -- Champion on Rubette, then retarget
@@ -185,19 +191,21 @@ local function doAbilities()
             end
         end
     end
-
-    useCharmClicky()
 end
 
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
 
     targetID = id
     engaged = true
+    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -211,21 +219,22 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     print("Disengaged")
 end)
 
-print("Shaman combat script loaded. Use /engage ### to start, /disengage to stop")
+print("Shaman combat script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    end
-
-    if engaged and targetValid() then
+    elseif engaged and targetValid() then
         mq.cmd('/attack on')
         doAbilities()
     end

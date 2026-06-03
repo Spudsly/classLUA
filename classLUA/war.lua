@@ -1,6 +1,7 @@
 local mq = require('mq')
 
 local engaged = false
+local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 
@@ -65,31 +66,8 @@ local function useCharmClicky()
     return true
 end
 
-local function doAbilities()
+local function doSelfBuffs()
     useBackBuff()
-
-    -- Divine Intervention (Reward Item)
-    if (mq.TLO.Me.Buff("Self Only Divine Intervention Clickie").ID() or 0) == 0 then
-        local di = mq.TLO.FindItem("=Divine Intervention (Reward Item)")
-        if di() and di.TimerReady() == 0 then
-            mq.cmd('/itemnotify "Divine Intervention (Reward Item)" rightmouseup')
-            mq.delay(50)
-        end
-    end
-
-    useDenyDeath()
-
-    -- Warrior's Defense VIII (slot 13)
-    if (mq.TLO.Me.Buff("Warrior's Defense VIII").Duration() or 0) < 600000 then
-        mq.cmd('/itemnotify 13 rightmouseup')
-        mq.delay(50)
-    end
-
-    -- Deranged Goblin Familiar
-    if (mq.TLO.Me.Buff("Deranged Goblin Blessing").ID() or 0) == 0 then
-        mq.cmd('/itemnotify "Deranged Goblin Familiar" rightmouseup')
-        mq.delay(50)
-    end
 
     -- Taunt
     if mq.TLO.Me.AbilityReady("Taunt")() then
@@ -126,12 +104,16 @@ end
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        print("Usage: /engage ### (where ### is target ID)")
+        buffMode = true
+        engaged = false
+        targetID = nil
+        print("Self-buff mode activated. Use /disengage to stop")
         return
     end
 
     targetID = id
     engaged = true
+    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -145,21 +127,22 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
+    buffMode = false
     print("Disengaged")
 end)
 
-print("Warrior combat script loaded. Use /engage ### to start, /disengage to stop")
+print("Warrior combat script loaded. Use /engage ### to start, /engage with no arg for self-buffs, /disengage to stop")
 
 while true do
     checkZoneChange()
 
-    if engaged and not targetValid() then
+    if buffMode then
+        doSelfBuffs()
+    elseif engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    end
-
-    if engaged and targetValid() then
+    elseif engaged and targetValid() then
         mq.cmd('/attack on')
         doAbilities()
     end
