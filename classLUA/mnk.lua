@@ -281,9 +281,6 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
-        if tonumber(mq.TLO.Target.Distance()) > 20 then
-            mq.cmd('/stick 15 uw behind loose hold')
-        end
         doAbilities()
     end
 
