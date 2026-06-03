@@ -21,32 +21,12 @@ local function checkZoneChange()
             engaged = false
             targetID = nil
         end
-    end
-end
-
--- Find spell gem by name
-local function getGemByName(name)
-    for i = 1, 12 do
-        local gem = mq.TLO.Me.Gem(i)
-        if gem() and gem.Name() == name then
-            return i
+        if tonumber(mq.TLO.Target.Distance()) <= 25 then
+            doAbilities()
         end
     end
-    return nil
-end
 
-local function useBackBuff()
-    local back = mq.TLO.Me.Inventory("Back")
-    if not back() then return false end
-    local timer = back.TimerReady()
-    if timer ~= nil and timer == 0 then
-        local dur = (mq.TLO.Me.Buff("Ancient Stonewall XII").Duration() or 0)
-        if dur == 0 then
-            dur = (mq.TLO.Me.Buff("Ancient Stonewall XIII").Duration() or 0)
-        end
-        if dur >= 300000 then return false end
-        mq.cmd('/nomodkey /itemnotify back rightmouseup')
-        mq.delay(50)
+    mq.delay(50)
         return true
     end
     return false

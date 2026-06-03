@@ -171,7 +171,9 @@ while true do
                 mq.cmd('/stick 15 uw loose hold')
             end
         end
-        doAbilities()
+        if tonumber(mq.TLO.Target.Distance()) <= 25 then
+            doAbilities()
+        end
     end
 
     mq.delay(50)
