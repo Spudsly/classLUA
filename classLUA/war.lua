@@ -3,6 +3,7 @@ local mq = require('mq')
 local engaged = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
+local epicTimer = 0
 
 local function checkZoneChange()
     local currentZone = mq.TLO.Zone.ID()
@@ -98,6 +99,17 @@ local function doSelfBuffs()
         mq.cmd('/discipline Cover')
         mq.delay(50)
     end
+
+    -- Epic weapon (slot 13, ~5s cooldown, Pureforge Blessing buff)
+    if (mq.TLO.Me.Buff("Pureforge Blessing").ID() or 0) == 0 and os.clock() - epicTimer >= 5 then
+        mq.cmd('/itemnotify 13 rightmouseup')
+        epicTimer = os.clock()
+        mq.delay(50)
+    end
+end
+
+local function doAbilities()
+    doSelfBuffs()
 end
 
 mq.bind('/engage', function(id)
