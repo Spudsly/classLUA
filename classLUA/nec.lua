@@ -214,6 +214,7 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
+        mq.cmd('/stick 15 uw behind loose hold')
         doAbilities()
     end
 
