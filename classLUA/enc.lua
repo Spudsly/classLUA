@@ -199,7 +199,7 @@ end
 
 mq.bind('/engage', function(id)
     id = tonumber(id)
-    if not id then
+    if id == 0 then
         print("Running self-buffs...")
         doSelfBuffs()
         print("Self-buffs complete")
