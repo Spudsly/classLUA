@@ -77,13 +77,6 @@ local function useRightwristClicky()
     return true
 end
 
-local function useFuriousSentinel()
-    if (mq.TLO.Me.Buff("Furious Sentinel Blessing").ID() or 0) ~= 0 then return false end
-    mq.cmd('/itemnotify "Furious Sentinel Familiar" rightmouseup')
-    mq.delay(50)
-    return true
-end
-
 local function useDenyDeath()
     if (mq.TLO.Me.Buff("Ancient: Deny Death I").ID() or 0) ~= 0 then return false end
     if (mq.TLO.Me.Buff("Ancient: Deny Death II").ID() or 0) ~= 0 then return false end
@@ -98,7 +91,11 @@ end
 local function doSelfBuffs()
     useBackBuff()
     useRightwristClicky()
-    useFuriousSentinel()
+    -- Thule's Nightmare Familiar
+    if (mq.TLO.Me.Buff("Thule's Nightmare Blessing").ID() or 0) == 0 then
+        mq.cmd('/itemnotify "Thule\'s Nightmare Familiar" rightmouseup')
+        mq.delay(50)
+    end
     useDenyDeath()
 
     -- Secrets' Secret Ranger Secrets II (find by gem name)
@@ -166,6 +163,22 @@ local function doAbilities()
         mq.cmd('/itemnotify 13 rightmouseup')
         epicTimer = os.clock()
         mq.delay(50)
+    end
+
+    -- Caster nukes (lowest priority)
+    if inCombat() then
+        local tinderGem = getGemByName("Burning Tinder III")
+        if tinderGem and mq.TLO.Me.SpellReady(tinderGem)() then
+            mq.cmdf('/cast %d', tinderGem)
+            mq.delay(50)
+        end
+    end
+    if inCombat() then
+        local burstGem = getGemByName("Burst of Fire")
+        if burstGem and mq.TLO.Me.SpellReady(burstGem)() then
+            mq.cmdf('/cast %d', burstGem)
+            mq.delay(50)
+        end
     end
 end
 
