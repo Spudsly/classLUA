@@ -122,9 +122,9 @@ mq.bind('/engage', function(id)
     id = tonumber(id)
     if id == 0 then
         print("Running self-buffs...")
-        for i = 1, 5 do
+        for i = 1, 10 do
             doSelfBuffs()
-            mq.delay(100)
+            mq.delay(200)
         end
         print("Self-buffs complete")
         return
