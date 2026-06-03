@@ -45,16 +45,6 @@ local function useBackBuff()
     return false
 end
 
-local function useDenyDeath()
-    if (mq.TLO.Me.Buff("Ancient: Deny Death I").ID() or 0) ~= 0 then return false end
-    if (mq.TLO.Me.Buff("Ancient: Deny Death II").ID() or 0) ~= 0 then return false end
-    local ring = mq.TLO.FindItem("Legendary Ring of the Ages")
-    if not ring() then return false end
-    if ring.Timer() ~= 0 then return false end
-    mq.cmdf('/casting "%s" item', ring.Name())
-    mq.delay(50)
-    return true
-end
 
 local function useCharmClicky()
     local charm = mq.TLO.Me.Inventory("Charm")
@@ -86,8 +76,6 @@ local function doSelfBuffs()
             mq.delay(50)
         end
     end
-
-    useDenyDeath()
 
     useCharmClicky()
 
