@@ -114,6 +114,13 @@ local function doSelfBuffs()
         mq.cmd('/casting "Yaulp X"')
         mq.delay(50)
     end
+
+    -- Ring of the High Priest
+    local ring = mq.TLO.FindItem("=Ring of the High Priest")
+    if ring() and ring.TimerReady() == 0 then
+        mq.cmd('/itemnotify rightfinger rightmouseup')
+        mq.delay(50)
+    end
 end
 
 local function doAbilities()
@@ -135,15 +142,6 @@ local function doAbilities()
                     mq.delay(50)
                 end
             end
-        end
-    end
-
-    -- Ring of the High Priest
-    if inCombat() then
-        local ring = mq.TLO.FindItem("=Ring of the High Priest")
-        if ring() and ring.TimerReady() == 0 then
-            mq.cmd('/itemnotify rightfinger rightmouseup')
-            mq.delay(50)
         end
     end
 
