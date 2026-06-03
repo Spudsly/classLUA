@@ -69,20 +69,38 @@ end
 local function doSelfBuffs()
     useBackBuff()
 
-    -- Taunt
-    if mq.TLO.Me.AbilityReady("Taunt")() then
-        mq.cmd('/doability Taunt')
+    -- Deranged Goblin Familiar (always up, or out of combat without pet)
+    if (mq.TLO.Me.Buff("Deranged Goblin Blessing").ID() or 0) == 0 or (not inCombat() and (mq.TLO.Pet.ID() or 0) == 0) then
+        mq.cmd('/itemnotify "Deranged Goblin Familiar" rightmouseup')
         mq.delay(50)
     end
 
-    -- Bashful Crustaceans' Angerbomb
+    -- Bashful Crustaceans' Angerbomb (inventory item, no buff check)
     local bomb = mq.TLO.FindItem("=Bashful Crustaceans' Angerbomb")
     if bomb() and bomb.TimerReady() == 0 then
         mq.cmd('/itemnotify "Bashful Crustaceans\' Angerbomb" rightmouseup')
         mq.delay(50)
     end
 
+    -- Divine Intervention (Reward Item)
+    if (mq.TLO.Me.Buff("Self Only Divine Intervention Clickie").ID() or 0) == 0 then
+        local di = mq.TLO.FindItem("=Divine Intervention (Reward Item)")
+        if di() and di.TimerReady() == 0 then
+            mq.cmd('/itemnotify "Divine Intervention (Reward Item)" rightmouseup')
+            mq.delay(50)
+        end
+    end
+
+    useDenyDeath()
+
     useCharmClicky()
+
+    -- Epic mainhand augment (slot 13, ~5s cooldown, Warrior's Defense VIII buff)
+    if (mq.TLO.Me.Buff("Warrior's Defense VIII").ID() or 0) == 0 and os.clock() - epicTimer >= 5 then
+        mq.cmd('/itemnotify 13 rightmouseup')
+        epicTimer = os.clock()
+        mq.delay(50)
+    end
 
     -- Essence of Hate (powersource slot, low priority)
     local ps = mq.TLO.Me.Inventory("Powersource")
@@ -93,23 +111,22 @@ local function doSelfBuffs()
             mq.delay(50)
         end
     end
+end
+
+local function doAbilities()
+    doSelfBuffs()
+
+    -- Taunt
+    if mq.TLO.Me.AbilityReady("Taunt")() then
+        mq.cmd('/doability Taunt')
+        mq.delay(50)
+    end
 
     -- Cover discipline
     if mq.TLO.Me.CombatAbilityReady("Cover")() and inCombat() then
         mq.cmd('/discipline Cover')
         mq.delay(50)
     end
-
-    -- Epic weapon (slot 13, ~5s cooldown, Warrior's Defense VIII buff)
-    if (mq.TLO.Me.Buff("Warrior's Defense VIII").ID() or 0) == 0 and os.clock() - epicTimer >= 5 then
-        mq.cmd('/itemnotify 13 rightmouseup')
-        epicTimer = os.clock()
-        mq.delay(50)
-    end
-end
-
-local function doAbilities()
-    doSelfBuffs()
 end
 
 mq.bind('/engage', function(id)
