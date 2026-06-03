@@ -75,13 +75,6 @@ local function doSelfBuffs()
         mq.delay(50)
     end
 
-    -- Bashful Crustaceans' Angerbomb (inventory item, no buff check)
-    local bomb = mq.TLO.FindItem("=Bashful Crustaceans' Angerbomb")
-    if bomb() and bomb.TimerReady() == 0 then
-        mq.cmd('/itemnotify "Bashful Crustaceans\' Angerbomb" rightmouseup')
-        mq.delay(50)
-    end
-
     -- Divine Intervention (Reward Item)
     if (mq.TLO.Me.Buff("Self Only Divine Intervention Clickie").ID() or 0) == 0 then
         local di = mq.TLO.FindItem("=Divine Intervention (Reward Item)")
@@ -101,8 +94,19 @@ local function doSelfBuffs()
         epicTimer = os.clock()
         mq.delay(50)
     end
+end
 
-    -- Essence of Hate (powersource slot, low priority)
+local function doAbilities()
+    doSelfBuffs()
+
+    -- Bashful Crustaceans' Angerbomb
+    local bomb = mq.TLO.FindItem("=Bashful Crustaceans' Angerbomb")
+    if bomb() and bomb.TimerReady() == 0 then
+        mq.cmd('/itemnotify "Bashful Crustaceans\' Angerbomb" rightmouseup')
+        mq.delay(50)
+    end
+
+    -- Essence of Hate (powersource slot)
     local ps = mq.TLO.Me.Inventory("Powersource")
     if ps() and (ps.Name() or ""):find("Essence of Hate", 1, true) then
         local timer = ps.TimerReady()
@@ -111,12 +115,6 @@ local function doSelfBuffs()
             mq.delay(50)
         end
     end
-end
-
-local function doAbilities()
-    doSelfBuffs()
-
-    -- Taunt
     if mq.TLO.Me.AbilityReady("Taunt")() then
         mq.cmd('/doability Taunt')
         mq.delay(50)
