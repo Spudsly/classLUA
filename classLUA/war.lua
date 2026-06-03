@@ -100,8 +100,8 @@ local function doSelfBuffs()
         mq.delay(50)
     end
 
-    -- Epic weapon (slot 13, ~5s cooldown, Pureforge Blessing buff)
-    if (mq.TLO.Me.Buff("Pureforge Blessing").ID() or 0) == 0 and os.clock() - epicTimer >= 5 then
+    -- Epic weapon (slot 13, ~5s cooldown, Warrior's Defense VIII buff)
+    if (mq.TLO.Me.Buff("Warrior's Defense VIII").ID() or 0) == 0 and os.clock() - epicTimer >= 5 then
         mq.cmd('/itemnotify 13 rightmouseup')
         epicTimer = os.clock()
         mq.delay(50)
