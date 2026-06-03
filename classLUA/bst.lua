@@ -1,7 +1,6 @@
 local mq = require('mq')
 
 local engaged = false
-local buffMode = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
 
@@ -188,16 +187,14 @@ end
 mq.bind('/engage', function(id)
     id = tonumber(id)
     if not id then
-        buffMode = true
-        engaged = false
-        targetID = nil
-        print("Self-buff mode activated. Use /disengage to stop")
+        print("Running self-buffs...")
+        doSelfBuffs()
+        print("Self-buffs complete")
         return
     end
 
     targetID = id
     engaged = true
-    buffMode = false
 
     mq.cmdf('/tar id %d', targetID)
     mq.delay(50)
@@ -212,7 +209,6 @@ end)
 mq.bind('/disengage', function()
     engaged = false
     targetID = nil
-    buffMode = false
     print("Disengaged")
 end)
 
@@ -221,13 +217,13 @@ print("Beastlord combat script loaded. Use /engage ### to start, /engage with no
 while true do
     checkZoneChange()
 
-    if buffMode then
-        doSelfBuffs()
-    elseif engaged and not targetValid() then
+    if engaged and not targetValid() then
         print("Target dead or invalid, disengaging")
         engaged = false
         targetID = nil
-    elseif engaged and targetValid() then
+    end
+
+    if engaged and targetValid() then
         mq.cmd('/attack on')
         doAbilities()
     end
