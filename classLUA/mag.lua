@@ -170,7 +170,7 @@ while true do
     if engaged and targetValid() then
         mq.cmd('/attack on')
         if stickEngaged then
-            if mq.TLO.Me.Moving() then
+            if mq.TLO.Me.Moving() and tonumber(mq.TLO.Target.Distance()) < 25 then
                 stickEngaged = false
             else
                 mq.cmd('/stick 15 uw behind loose hold')
