@@ -198,6 +198,7 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
+        mq.cmdf('/tar id %d', targetID)
         if stickEngaged then
             if mq.TLO.Me.Moving() and (tonumber(mq.TLO.Target.Distance()) or 999) < 25 then
                 stickEngaged = false
