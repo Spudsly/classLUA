@@ -198,12 +198,6 @@ while true do
         mq.cmd('/attack on')
         doAbilities()
     end
-    end
-
-    if engaged and targetValid() then
-        mq.cmd('/attack on')
-        doAbilities()
-    end
 
     mq.delay(50)
 end
