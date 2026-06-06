@@ -44,7 +44,7 @@ local function targetValid()
     if not targetID then return false end
     local spawn = mq.TLO.Spawn(targetID)
     if not spawn() then return false end
-    return spawn.CurrentHPs() > 0
+    return spawn.Type() == "NPC" and spawn.CurrentHPs() > 0
 end
 
 local function inCombat()
@@ -66,18 +66,6 @@ local function useBackBuff()
         return true
     end
     return false
-end
-
--- Deny Death (any rank X through XV)
-local function useDenyDeath()
-    if (mq.TLO.Me.Buff("Ancient: Deny Death I").ID() or 0) ~= 0 then return false end
-    if (mq.TLO.Me.Buff("Ancient: Deny Death II").ID() or 0) ~= 0 then return false end
-    local ring = mq.TLO.FindItem("=Legendary Ring of the Ages X")
-    if not ring() then return false end
-    if ring.Timer() ~= 0 then return false end
-    mq.cmdf('/casting "%s" item', ring.Name())
-    mq.delay(50)
-    return true
 end
 
 local function useCharmClicky()
@@ -102,8 +90,19 @@ local function trySpells()
     return false
 end
 
+local function useRightwristClicky()
+    local rightwrist = mq.TLO.Me.Inventory("Rightwrist")
+    if not rightwrist() then return false end
+    if rightwrist.TimerReady() ~= 0 then return false end
+    if (mq.TLO.Me.Buff("Cloak of Anarchy").Duration() or 0) >= 300000 then return false end
+    mq.cmd('/nomodkey /itemnotify rightwrist rightmouseup')
+    mq.delay(50)
+    return true
+end
+
 local function doSelfBuffs()
     useBackBuff()
+    useRightwristClicky()
 
     -- Painfully Gorgeous (right ear)
     if (mq.TLO.Me.Buff("Painfully Gorgeous").ID() or 0) == 0 then
@@ -126,31 +125,11 @@ local function doSelfBuffs()
         end
     end
 
-    -- Fastest Travel
-    if (mq.TLO.Me.Buff("Fastest Travel Clickie").ID() or 0) == 0 then
-        local travel = mq.TLO.FindItem("=Fastest Travel (Reward Item)")
-        if travel() and travel.Timer() == 0 then
-            mq.cmd('/itemnotify "Fastest Travel (Reward Item)" rightmouseup')
-            mq.delay(50)
-        end
-    end
-
-    -- Right wrist (Cloak of Anarchy)
-    if (mq.TLO.Me.Buff("Cloak of Anarchy").Duration() or 0) < 300000 then
-        local rightwrist = mq.TLO.Me.Inventory("Rightwrist")
-        if rightwrist() and (rightwrist.TimerReady() or 0) == 0 then
-            mq.cmd('/nomodkey /itemnotify rightwrist rightmouseup')
-            mq.delay(50)
-        end
-    end
-
     -- Thule's Nightmare Familiar
     if (mq.TLO.Me.Buff("Thule's Nightmare Blessing").ID() or 0) == 0 then
         mq.cmd('/itemnotify "Thule\'s Nightmare Familiar" rightmouseup')
         mq.delay(50)
     end
-
-    useDenyDeath()
 
     -- Call of the Alpha I
     if (mq.TLO.Me.Buff("Call of the Alpha I").ID() or 0) == 0 then
@@ -159,19 +138,20 @@ local function doSelfBuffs()
     end
 end
 
-local function doAbilities()
-    doSelfBuffs()
-
-    -- Chest clicky
-    if inCombat() then
-        local chest = mq.TLO.Me.Inventory("Chest")
-        if chest() and (chest.TimerReady() or 0) == 0 then
-            mq.cmd('/itemnotify chest rightmouseup')
-            mq.delay(50)
-        end
+local function useChestClicky()
+    if not inCombat() then return false end
+    local chest = mq.TLO.Me.Inventory("Chest")
+    if not chest() then return false end
+    if (chest.TimerReady() or 0) == 0 then
+        mq.cmd('/itemnotify chest rightmouseup')
+        mq.delay(50)
+        return true
     end
+    return false
+end
 
-    -- Combat rotation: disc then spells (both fire independently like the macro)
+local function doAbilities()
+    useChestClicky()
     if engaged and targetValid() and not mq.TLO.Me.Casting() then
         if inCombat() and mq.TLO.Me.CombatAbilityReady("Bestial Fury Discipline")() then
             mq.cmd('/disc Bestial Fury Discipline')
@@ -189,7 +169,10 @@ mq.bind('/engage', function(id)
     id = tonumber(id)
     if id == 0 then
         print("Running self-buffs...")
-        doSelfBuffs()
+        for i = 1, 10 do
+            doSelfBuffs()
+            mq.delay(200)
+        end
         print("Self-buffs complete")
         return
     end
@@ -228,10 +211,11 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
+        doSelfBuffs()
         if stickEngaged then
             if (tonumber(mq.TLO.Target.ID()) or 0) ~= targetID then
                 stickEngaged = false
-            elseif mq.TLO.Me.Moving() and (tonumber(mq.TLO.Target.Distance()) or 999) < 25 then
+            elseif mq.TLO.Me.Moving() then
                 stickEngaged = false
             else
                 mq.cmd('/stick 15 uw behind loose hold')

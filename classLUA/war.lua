@@ -3,7 +3,7 @@ local mq = require('mq')
 local engaged = false
 local targetID = nil
 local lastZone = mq.TLO.Zone.ID()
-local epicTimer = 0
+
 local stickEngaged = false
 
 local function checkZoneChange()
@@ -38,7 +38,7 @@ local function useBackBuff()
         if dur == 0 then
             dur = (mq.TLO.Me.Buff("Ancient Stonewall XIII").Duration() or 0)
         end
-        if dur >= 600000 then return false end
+        if dur >= 300000 then return false end
         mq.cmd('/nomodkey /itemnotify back rightmouseup')
         mq.delay(50)
         return true
@@ -60,13 +60,16 @@ end
 local function doSelfBuffs()
     useBackBuff()
 
-    -- Deranged Goblin Familiar (always up, or out of combat without pet)
+    -- Deranged Goblin Familiar (no TimerReady gate — buff check is sufficient)
     if (mq.TLO.Me.Buff("Deranged Goblin Blessing").ID() or 0) == 0 or (not inCombat() and (mq.TLO.Pet.ID() or 0) == 0) then
-        local goblin = mq.TLO.FindItem("=Deranged Goblin Familiar")
-        if goblin() and goblin.TimerReady() == 0 then
-            mq.cmd('/itemnotify "Deranged Goblin Familiar" rightmouseup')
-            mq.delay(50)
-        end
+        mq.cmd('/itemnotify "Deranged Goblin Familiar" rightmouseup')
+        mq.delay(50)
+    end
+
+    -- Epic mainhand augment (Warrior's Defense VIII)
+    if (mq.TLO.Me.Buff("Warrior's Defense VIII").ID() or 0) == 0 then
+        mq.cmd('/itemnotify 13 rightmouseup')
+        mq.delay(50)
     end
 
     -- Divine Intervention (Reward Item)
@@ -79,17 +82,22 @@ local function doSelfBuffs()
     end
 
     useCharmClicky()
-
-    -- Epic mainhand augment (slot 13, ~5s cooldown, Warrior's Defense VIII buff)
-    if (mq.TLO.Me.Buff("Warrior's Defense VIII").ID() or 0) == 0 and os.clock() - epicTimer >= 5 then
-        mq.cmd('/itemnotify 13 rightmouseup')
-        epicTimer = os.clock()
-        mq.delay(50)
-    end
 end
 
 local function doAbilities()
-    doSelfBuffs()
+    useBackBuff()
+
+    -- Deranged Goblin Familiar (no TimerReady gate — buff check is sufficient)
+    if (mq.TLO.Me.Buff("Deranged Goblin Blessing").ID() or 0) == 0 or (not inCombat() and (mq.TLO.Pet.ID() or 0) == 0) then
+        mq.cmd('/itemnotify "Deranged Goblin Familiar" rightmouseup')
+        mq.delay(50)
+    end
+
+    -- Epic mainhand augment (Warrior's Defense VIII)
+    if (mq.TLO.Me.Buff("Warrior's Defense VIII").ID() or 0) == 0 then
+        mq.cmd('/itemnotify 13 rightmouseup')
+        mq.delay(50)
+    end
 
     -- Bashful Crustaceans' Angerbomb
     local bomb = mq.TLO.FindItem("=Bashful Crustaceans' Angerbomb")
@@ -164,10 +172,11 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
+        doSelfBuffs()
         if stickEngaged then
             if (tonumber(mq.TLO.Target.ID()) or 0) ~= targetID then
                 stickEngaged = false
-            elseif mq.TLO.Me.Moving() and (tonumber(mq.TLO.Target.Distance()) or 999) < 25 then
+            elseif mq.TLO.Me.Moving() then
                 stickEngaged = false
             else
                 mq.cmd('/stick 15 uw loose hold')

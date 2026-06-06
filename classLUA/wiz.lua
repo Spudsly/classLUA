@@ -24,6 +24,18 @@ local function checkZoneChange()
     end
 end
 
+-- Check if target is valid and alive
+local function targetValid()
+    if not targetID then return false end
+    local spawn = mq.TLO.Spawn(targetID)
+    if not spawn() then return false end
+    return spawn.Type() == "NPC" and spawn.CurrentHPs() > 0
+end
+
+local function inCombat()
+    return mq.TLO.Me.CombatState() == "COMBAT"
+end
+
 -- Find spell gem by name
 local function getGemByName(name)
     for i = 1, 12 do
@@ -52,18 +64,6 @@ local function useBackBuff()
     return false
 end
 
-local function inCombat()
-    return mq.TLO.Me.CombatState() == "COMBAT"
-end
-
--- Check if target is valid and alive
-local function targetValid()
-    if not targetID then return false end
-    local spawn = mq.TLO.Spawn(targetID)
-    if not spawn() then return false end
-    return spawn.Type() == "NPC" and spawn.CurrentHPs() > 0
-end
-
 -- Try casting spells in order
 local function trySpells()
     for _, spellName in ipairs(spells) do
@@ -77,12 +77,85 @@ local function trySpells()
     return false
 end
 
+local function useRightwristClicky()
+    local rightwrist = mq.TLO.Me.Inventory("Rightwrist")
+    if not rightwrist() then return false end
+    if rightwrist.TimerReady() ~= 0 then return false end
+    if (mq.TLO.Me.Buff("Cloak of").Duration() or 0) >= 300000 then return false end
+    mq.cmd('/nomodkey /itemnotify rightwrist rightmouseup')
+    mq.delay(50)
+    return true
+end
+
+local function useCharmClicky()
+    local charm = mq.TLO.Me.Inventory("Charm")
+    if not charm() then return false end
+    if (mq.TLO.Me.Buff("ultimate rune").ID() or 0) ~= 0 then return false end
+    if (charm.TimerReady() or 0) ~= 0 then return false end
+    mq.cmd('/itemnotify charm rightmouseup')
+    mq.delay(50)
+    return true
+end
+
+local function useChestClicky()
+    if not inCombat() then return false end
+    local chest = mq.TLO.Me.Inventory("Chest")
+    if not chest() then return false end
+    if (chest.TimerReady() or 0) == 0 then
+        mq.cmd('/itemnotify chest rightmouseup')
+        mq.delay(50)
+        return true
+    end
+    return false
+end
+
 local function doSelfBuffs()
     useBackBuff()
+    useRightwristClicky()
+    useCharmClicky()
+
+    -- Thule's Nightmare Familiar
+    if (mq.TLO.Me.Buff("Thule's Nightmare Blessing").ID() or 0) == 0 then
+        mq.cmd('/itemnotify "Thule\'s Nightmare Familiar" rightmouseup')
+        mq.delay(50)
+    end
+
+    -- Thick Ether Skin (epic augment slot 13, no cooldown)
+    if (mq.TLO.Me.Buff("Thick Ether Skin").ID() or 0) == 0 then
+        mq.cmd('/itemnotify 13 rightmouseup')
+        mq.delay(50)
+    end
+
+    -- Painfully Gorgeous (earring)
+    if (mq.TLO.Me.Buff("Painfully Gorgeous").ID() or 0) == 0 then
+        local rightEar = mq.TLO.Me.Inventory("Rightear")
+        if rightEar() and (rightEar.Name() or ""):find("Earring of the Mystic Ages", 1, true) then
+            mq.cmd('/itemnotify rightear rightmouseup')
+            mq.delay(50)
+        end
+    end
+
+    -- Cryomancy (self buff spell)
+    if (mq.TLO.Me.Buff("Cryomancy").ID() or 0) == 0 then
+        local gem = getGemByName("Cryomancy")
+        if gem and mq.TLO.Me.SpellReady(gem)() then
+            mq.cmdf('/cast %d', gem)
+            mq.delay(50)
+        end
+    end
+
+    -- Curious Creation (pet summon)
+    if (mq.TLO.Pet.ID() or 0) == 0 then
+        local gem = getGemByName("Curious Creation")
+        if gem and mq.TLO.Me.SpellReady(gem)() then
+            mq.cmdf('/cast %d', gem)
+            mq.delay(50)
+        end
+    end
 end
 
 local function doAbilities()
-    doSelfBuffs()
+    useChestClicky()
 
     -- Don't interrupt casting
     if not mq.TLO.Me.Casting() then
@@ -121,7 +194,10 @@ mq.bind('/engage', function(id)
     id = tonumber(id)
     if id == 0 then
         print("Running self-buffs...")
-        doSelfBuffs()
+        for i = 1, 10 do
+            doSelfBuffs()
+            mq.delay(200)
+        end
         print("Self-buffs complete")
         return
     end
@@ -160,10 +236,11 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
+        doSelfBuffs()
         if stickEngaged then
             if (tonumber(mq.TLO.Target.ID()) or 0) ~= targetID then
                 stickEngaged = false
-            elseif mq.TLO.Me.Moving() and (tonumber(mq.TLO.Target.Distance()) or 999) < 25 then
+            elseif mq.TLO.Me.Moving() then
                 stickEngaged = false
             else
                 mq.cmd('/stick 15 uw behind loose hold')
@@ -174,5 +251,5 @@ while true do
         end
     end
 
-    mq.delay(100)
+    mq.delay(50)
 end

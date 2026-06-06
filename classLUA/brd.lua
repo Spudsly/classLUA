@@ -150,7 +150,6 @@ local function doCombat()
 end
 
 local function doAbilities()
-    doSelfBuffs()
     doCombat()
 end
 
@@ -158,7 +157,10 @@ mq.bind('/engage', function(id)
     id = tonumber(id)
     if id == 0 then
         print("Running self-buffs...")
-        doSelfBuffs()
+        for i = 1, 10 do
+            doSelfBuffs()
+            mq.delay(200)
+        end
         print("Self-buffs complete")
         return
     end
@@ -180,9 +182,6 @@ mq.bind('/disengage', function()
     engaged = false
     targetID = nil
     stickEngaged = false
-    if mq.TLO.Twist.Twisting() then
-        mq.cmd('/twist stop')
-    end
     print("Disengaged")
 end)
 
@@ -199,10 +198,11 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
+        doSelfBuffs()
         if stickEngaged then
             if (tonumber(mq.TLO.Target.ID()) or 0) ~= targetID then
                 stickEngaged = false
-            elseif mq.TLO.Me.Moving() and (tonumber(mq.TLO.Target.Distance()) or 999) < 25 then
+            elseif mq.TLO.Me.Moving() then
                 stickEngaged = false
             else
                 mq.cmd('/stick 15 uw behind loose hold')

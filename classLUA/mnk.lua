@@ -196,24 +196,12 @@ local function useFuriousSentinel()
     return true
 end
 
-local function useDenyDeath()
-    if (mq.TLO.Me.Buff("Ancient: Deny Death I").ID() or 0) ~= 0 then return false end
-    if (mq.TLO.Me.Buff("Ancient: Deny Death II").ID() or 0) ~= 0 then return false end
-    local ring = mq.TLO.FindItem("Legendary Ring of the Ages")
-    if not ring() then return false end
-    if ring.Timer() ~= 0 then return false end
-    mq.cmdf('/casting "%s" item', ring.Name())
-    mq.delay(50)
-    return true
-end
-
 local function doSelfBuffs()
     useBackBuff()
     useEarringMysticAges()
     useRightwristClicky()
     useFuriousSentinel()
     doCombatBuffClickies()
-    useDenyDeath()
 
     -- Fists of Wu
     if (mq.TLO.Me.Song("Fists of Wu").ID() or 0) == 0 then
@@ -225,7 +213,6 @@ local function doSelfBuffs()
 end
 
 local function doAbilities()
-    doSelfBuffs()
 
     -- Dragon Fang
     if inCombat() and mq.TLO.Me.CombatAbilityReady("Dragon Fang")() then
@@ -245,7 +232,10 @@ mq.bind('/engage', function(id)
     id = tonumber(id)
     if id == 0 then
         print("Running self-buffs...")
-        doSelfBuffs()
+        for i = 1, 10 do
+            doSelfBuffs()
+            mq.delay(200)
+        end
         print("Self-buffs complete")
         return
     end
@@ -284,10 +274,11 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
+        doSelfBuffs()
         if stickEngaged then
             if (tonumber(mq.TLO.Target.ID()) or 0) ~= targetID then
                 stickEngaged = false
-            elseif mq.TLO.Me.Moving() and (tonumber(mq.TLO.Target.Distance()) or 999) < 25 then
+            elseif mq.TLO.Me.Moving() then
                 stickEngaged = false
             else
                 mq.cmd('/stick 15 uw behind loose hold')

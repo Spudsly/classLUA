@@ -45,17 +45,6 @@ local function useBackBuff()
     return false
 end
 
-local function useDenyDeath()
-    if (mq.TLO.Me.Buff("Ancient: Deny Death I").ID() or 0) ~= 0 then return false end
-    if (mq.TLO.Me.Buff("Ancient: Deny Death II").ID() or 0) ~= 0 then return false end
-    local ring = mq.TLO.FindItem("Legendary Ring of the Ages")
-    if not ring() then return false end
-    if ring.Timer() ~= 0 then return false end
-    mq.cmdf('/casting "%s" item', ring.Name())
-    mq.delay(50)
-    return true
-end
-
 local function useRightwristClicky()
     local rightwrist = mq.TLO.Me.Inventory("Rightwrist")
     if not rightwrist() then return false end
@@ -77,12 +66,15 @@ local function useCharmClicky()
 end
 
 local function useChestClicky()
+    if not inCombat() then return false end
     local chest = mq.TLO.Me.Inventory("Chest")
     if not chest() then return false end
-    if (chest.TimerReady() or 0) ~= 0 then return false end
-    mq.cmd('/itemnotify chest rightmouseup')
-    mq.delay(50)
-    return true
+    if (chest.TimerReady() or 0) == 0 then
+        mq.cmd('/itemnotify chest rightmouseup')
+        mq.delay(50)
+        return true
+    end
+    return false
 end
 
 local function doSelfBuffs()
@@ -94,8 +86,6 @@ local function doSelfBuffs()
         mq.cmd('/itemnotify "Thule\'s Nightmare Familiar" rightmouseup')
         mq.delay(50)
     end
-
-    useDenyDeath()
 
     -- Dark Beast
     if (mq.TLO.Me.Buff("Dark Beast").ID() or 0) == 0 then
@@ -138,7 +128,6 @@ local function doAbilities()
         end
     end
 
-    doSelfBuffs()
     useChestClicky()
 
     -- Powersource slot click (Brain of Cazic Thule / The Necronomicon / any)
@@ -179,7 +168,10 @@ mq.bind('/engage', function(id)
     id = tonumber(id)
     if id == 0 then
         print("Running self-buffs...")
-        doSelfBuffs()
+        for i = 1, 10 do
+            doSelfBuffs()
+            mq.delay(200)
+        end
         print("Self-buffs complete")
         return
     end
@@ -217,10 +209,11 @@ while true do
 
     if engaged and targetValid() then
         mq.cmd('/attack on')
+        doSelfBuffs()
         if stickEngaged then
             if (tonumber(mq.TLO.Target.ID()) or 0) ~= targetID then
                 stickEngaged = false
-            elseif mq.TLO.Me.Moving() and (tonumber(mq.TLO.Target.Distance()) or 999) < 25 then
+            elseif mq.TLO.Me.Moving() then
                 stickEngaged = false
             else
                 mq.cmd('/stick 15 uw behind loose hold')
